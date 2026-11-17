@@ -1,0 +1,53 @@
+DLAY 1.0.0 - installing
+=======================
+
+DLAY is an effect plug-in (VST3 on every system, Audio Unit on the Mac) and a standalone
+app. This archive holds the build for one system; use the section for yours.
+
+
+WINDOWS
+-------
+1. Copy the folder   VST3\DLAY.vst3   to   C:\Program Files\Common Files\VST3\
+   DLAY.vst3 is a folder: copy all of it. Windows asks for administrator permission.
+2. Rescan plug-ins in your DAW.
+
+The standalone app is   Standalone\DLAY.exe   and runs from anywhere.
+
+
+MAC
+---
+1. Copy   VST3/DLAY.vst3      to   ~/Library/Audio/Plug-Ins/VST3/
+   Copy   AU/DLAY.component   to   ~/Library/Audio/Plug-Ins/Components/
+   "~/Library" is the Library folder inside your home folder. In Finder choose
+   Go > Go to Folder... and paste the path.
+2. This build is not signed by a registered Apple developer. If macOS or your DAW refuses
+   to load it, open Terminal and run these two lines once:
+
+       xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/DLAY.vst3
+       xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/DLAY.component
+
+3. Rescan plug-ins in your DAW.
+
+The standalone app is   Standalone/DLAY.app
+
+
+LINUX
+-----
+Copy   VST3/DLAY.vst3   to   ~/.vst3/   and rescan. The standalone is   Standalone/DLAY
+
+
+FL STUDIO
+---------
+1. OPTIONS > Manage plugins > Find installed plugins.
+2. DLAY then appears among the effects. Click the star next to it to make it a favourite.
+3. Open the Mixer, pick an insert, click an empty slot and choose DLAY.
+
+
+FIRST STEPS
+-----------
+- Click the preset name at the top for the library (239 presets, searchable), or step
+  through them with the arrows next to it.
+- MIX sets how much echo you hear. FEEDBACK sets how long the echoes go on.
+- TIME is a note value while SYNC is on, and milliseconds when it is off.
+- On a send track set MIX to 100 % and switch on MENU > "Keep MIX when changing presets".
+- Hover over any control for a description. Double-click a knob to reset it.

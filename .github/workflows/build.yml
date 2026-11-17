@@ -1,0 +1,114 @@
+name: Build DLAY
+
+# Builds and tests the plug-in on Windows, macOS and Linux.
+#
+# Every run offers the three builds as downloads: open the run and look for "Artifacts" at
+# the bottom of its page. Pushing a tag such as v1.0.0 also publishes them on the
+# repository's Releases page.
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows (VST3 + Standalone)
+            os: windows-latest
+            package: DLAY-Windows
+          - name: macOS universal (VST3 + AU + Standalone)
+            os: macos-latest
+            package: DLAY-macOS
+          - name: Linux (VST3 + Standalone)
+            os: ubuntu-latest
+            package: DLAY-Linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build \
+            libasound2-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxrender-dev libxcomposite-dev libxi-dev libfreetype-dev libfontconfig1-dev \
+            libgl1-mesa-dev libegl-dev
+
+      - name: Cache JUCE
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # One archive per system, made here rather than by the upload step: that keeps the
+      # file permissions the Mac bundles need.
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p "dist/${{ matrix.package }}"
+          for folder in VST3 AU Standalone; do
+            if [ -d "build/DLAY_artefacts/Release/$folder" ]; then
+              cp -R "build/DLAY_artefacts/Release/$folder" "dist/${{ matrix.package }}/"
+            fi
+          done
+          cp INSTALL.txt "dist/${{ matrix.package }}/"
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "${{ matrix.package }}.zip" "${{ matrix.package }}"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent "${{ matrix.package }}" "${{ matrix.package }}.zip"
+          else
+            zip -qry "${{ matrix.package }}.zip" "${{ matrix.package }}"
+          fi
+          ls -l
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package }}
+          path: dist/${{ matrix.package }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/*.zip \
+            --repo "${{ github.repository }}" \
+            --title "DLAY ${{ github.ref_name }}" \
+            --notes "Download the archive for your system, unzip it and follow INSTALL.txt inside."
