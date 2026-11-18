@@ -21,6 +21,10 @@ on:
         description: "Mark this build as a numbered version, e.g. 1.1.0 (leave empty for none)"
         required: false
         default: ""
+      mac_runner:
+        description: "Mac build machine: macos-latest (Apple Silicon), or macos-15-intel when those are busy"
+        required: false
+        default: "macos-latest"
 
 concurrency:
   group: build-${{ github.ref }}
@@ -37,8 +41,11 @@ jobs:
           - name: Windows (VST3 + Standalone, installer)
             os: windows-latest
             system: Windows
+          # GitHub's Apple Silicon machines are sometimes all taken, and a job that finds none
+          # within a quarter of an hour is cancelled. A run started by hand can name an Intel
+          # machine instead; the build is universal either way.
           - name: macOS universal (VST3 + AU + Standalone, installer)
-            os: macos-latest
+            os: ${{ github.event.inputs.mac_runner || 'macos-latest' }}
             system: macOS
           - name: Linux (VST3 + Standalone)
             os: ubuntu-latest
