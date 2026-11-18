@@ -225,8 +225,9 @@ jobs:
 
   # Keeps what was built. It also runs when a system's job was cancelled before it started
   # (GitHub had no machine free for it): the other systems' installers are kept, and the
-  # missing one is added by "Re-run failed jobs" on the run's page. It does not run when a
-  # job actually failed, or when the whole run was cancelled.
+  # missing one is added by "Re-run failed jobs" on the run's page, which takes the others
+  # from the draft that is already there. It does not run when a job actually failed, or
+  # when the whole run was cancelled.
   release:
     name: Keep the build
     if: ${{ always() && !cancelled() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
@@ -251,7 +252,9 @@ jobs:
             exit 1
           fi
 
+      # (May find nothing: after a re-run in which the missing system had no machine again.)
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           path: dist
           merge-multiple: true
@@ -262,6 +265,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
+          mkdir -p dist
+
+          # A re-run of a job that had no machine the first time builds only that system.
+          # The others are already in the draft that was made from this same commit: take
+          # them from there, so the new draft is complete.
+          previous=$(gh api "repos/$REPO/releases?per_page=100" \
+            --jq "[.[] | select(.draft and .tag_name == \"latest\" and .target_commitish == \"$GITHUB_SHA\")][0].id // empty")
+          if [ -n "$previous" ]; then
+            gh api "repos/$REPO/releases/$previous/assets" --jq '.[] | "\(.id) \(.name)"' | while read -r id name; do
+              if [[ "$name" =~ ^DLAY-[0-9.]+-(Windows|macOS|Linux)\.zip$ ]] && [ ! -f "dist/$name" ]; then
+                gh api -H "Accept: application/octet-stream" "repos/$REPO/releases/assets/$id" > "dist/$name"
+                echo "taken from the draft of this commit: $name"
+              fi
+            done
+          fi
+
           ls -l dist
           version=$(ls dist | sed -n 's/^DLAY-\([0-9][0-9.]*\)-[A-Za-z]*\.zip$/\1/p' | head -n 1)
           test -n "$version" || { echo "::error::no archive was built"; exit 1; }
@@ -313,11 +332,8 @@ jobs:
 
       # On a public repository every signed-in GitHub user can download what is listed
       # under "Artifacts" on a run's page. The installers now live in the draft release, so
-      # remove them from there - this run's and any left by earlier runs. While a system is
-      # still missing they stay, so that a re-run can put the complete set together (they
-      # expire by themselves after three days).
+      # remove them from there - this run's and any left by earlier runs.
       - name: Remove the build artifacts
-        if: steps.keep.outputs.missing == ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

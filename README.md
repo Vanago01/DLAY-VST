@@ -367,7 +367,7 @@ Run by the GitHub workflow on GitHub's machines, on every push:
 
 | System | Compiler | Result |
 |---|---|---|
-| Windows (windows-2025 image) | MSVC 19.51 | builds with no warnings from the project sources; `DLAY_Tests` passes; `DLAY_HostCheck` loads the built VST3 and passes |
+| Windows (windows-2025 image) | MSVC 19.51 | builds with no warnings from the project sources; `DLAY_Tests` passes; `DLAY_HostCheck` loads the built VST3 and passes. The installer (Inno Setup 6.7) is built, run over a copy that was put in place by hand, the installed plug-in passes `DLAY_HostCheck` again, and the uninstaller removes it |
 | macOS 26 (Apple Silicon machine, universal build for Intel and Apple Silicon) | AppleClang 21 | the same; VST3, AU and Standalone are sealed with an ad-hoc signature that verifies |
 | Linux (Ubuntu 26.04) | GCC 15.2 | the same |
 
