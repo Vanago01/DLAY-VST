@@ -7,6 +7,9 @@ name: Build DLAY
 #     "DLAY - latest build". A draft is only visible to people who can write to this
 #     repository: open the Releases page while signed in. The installers are not public
 #     here - they are handed out on the VBEATS website.
+#   - If GitHub has no machine free for one system (it happens with the Macs), the build is
+#     kept without that system and says so in its title. "Re-run failed jobs" on the run's
+#     page adds it later.
 #   - To mark a version: start this workflow by hand (Actions > Build DLAY > Run workflow)
 #     and type the version number, or push a tag such as v1.1.0. That publishes a release
 #     "DLAY 1.1.0" which marks the source code of that version (no installers attached).
@@ -220,9 +223,13 @@ jobs:
             echo "::warning::auval did not pass on this machine (see the log of this step)"
           fi
 
+  # Keeps what was built. It also runs when a system's job was cancelled before it started
+  # (GitHub had no machine free for it): the other systems' installers are kept, and the
+  # missing one is added by "Re-run failed jobs" on the run's page. It does not run when a
+  # job actually failed, or when the whole run was cancelled.
   release:
     name: Keep the build
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    if: ${{ always() && !cancelled() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -230,19 +237,50 @@ jobs:
       actions: write
 
     steps:
+      - name: Check that nothing failed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/actions/runs/$GITHUB_RUN_ID/jobs?per_page=50" \
+            --jq '.jobs[] | select(.name != "Keep the build") | "\(.conclusion // .status)  \(.name)"'
+          failed=$(gh api "repos/$REPO/actions/runs/$GITHUB_RUN_ID/jobs?per_page=50" \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join("; ")')
+          if [ -n "$failed" ]; then
+            echo "::error::This build is not kept, because a job failed: $failed"
+            exit 1
+          fi
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
       - name: Keep the installers as a draft release
+        id: keep
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           ls -l dist
-          version=$(ls dist | sed -n 's/^DLAY-\([0-9][0-9.]*\)-Windows\.zip$/\1/p')
-          test -n "$version" || { echo "::error::the Windows archive is missing"; exit 1; }
+          version=$(ls dist | sed -n 's/^DLAY-\([0-9][0-9.]*\)-[A-Za-z]*\.zip$/\1/p' | head -n 1)
+          test -n "$version" || { echo "::error::no archive was built"; exit 1; }
+
+          missing=""
+          for system in Windows macOS Linux; do
+            test -f "dist/DLAY-$version-$system.zip" || missing="${missing:+$missing and }$system"
+          done
+
+          title="DLAY $version - latest build (draft, not public)"
+          notes="The newest successful build of the main branch (commit ${GITHUB_SHA::7}). This is a draft: only people who can write to this repository see it. Each archive holds the installer for one system and INSTALL.txt. Official downloads are handed out on the VBEATS website."
+          if [ -n "$missing" ]; then
+            title="DLAY $version - latest build, without $missing (draft, not public)"
+            notes="$notes
+
+          **$missing is missing from this build:** GitHub had no build machine free for it. Open the run (Actions > the newest \"Build DLAY\" run) and choose \"Re-run failed jobs\" to add it."
+            echo "::warning::No build for $missing: GitHub had no machine free. Use \"Re-run failed jobs\" on this run to add it."
+          fi
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
           # A draft release is visible only to people who can write to the repository.
           # The previous one is replaced: earlier drafts first (a draft has no tag, so they
@@ -252,9 +290,7 @@ jobs:
             gh api -X DELETE "repos/$REPO/releases/$id" > /dev/null && echo "removed the previous draft ($id)"
           done
           gh release delete latest --repo "$REPO" --yes --cleanup-tag 2> /dev/null || true
-          gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" --draft \
-            --title "DLAY $version - latest build (draft, not public)" \
-            --notes "The newest successful build of the main branch (commit ${GITHUB_SHA::7}). This is a draft: only people who can write to this repository see it. Each archive holds the installer for one system and INSTALL.txt. Official downloads are handed out on the VBEATS website."
+          gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" --draft --title "$title" --notes "$notes"
 
       - name: Mark a numbered version
         if: github.event.inputs.version != '' || startsWith(github.ref, 'refs/tags/v')
@@ -266,17 +302,22 @@ jobs:
           notes="The source code of this version of DLAY. The installers are handed out on the VBEATS website; to build it yourself, see README.md."
 
           if [ -n "$VERSION" ]; then
+            gh release view "v${VERSION#v}" --repo "$REPO" > /dev/null 2>&1 && { echo "v${VERSION#v} is already marked"; exit 0; }
             gh release create "v${VERSION#v}" --repo "$REPO" --target "$GITHUB_SHA" \
               --title "DLAY ${VERSION#v}" --notes "$notes"
           else
+            gh release view "$GITHUB_REF_NAME" --repo "$REPO" > /dev/null 2>&1 && { echo "$GITHUB_REF_NAME is already marked"; exit 0; }
             gh release create "$GITHUB_REF_NAME" --repo "$REPO" --verify-tag \
               --title "DLAY ${GITHUB_REF_NAME#v}" --notes "$notes"
           fi
 
       # On a public repository every signed-in GitHub user can download what is listed
-      # under "Artifacts" on a run's page. The installers of main now live in the draft
-      # release, so remove them from there - this run's and any left by earlier runs.
+      # under "Artifacts" on a run's page. The installers now live in the draft release, so
+      # remove them from there - this run's and any left by earlier runs. While a system is
+      # still missing they stay, so that a re-run can put the complete set together (they
+      # expire by themselves after three days).
       - name: Remove the build artifacts
+        if: steps.keep.outputs.missing == ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
