@@ -18,6 +18,8 @@ on:
   push:
     branches: ['**']
     tags: ['v*']
+    # README.md is not part of any package: a change to it alone needs no new build.
+    paths-ignore: ['README.md']
   workflow_dispatch:
     inputs:
       version:
@@ -197,7 +199,9 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           pkg="dist/DLAY-$DLAY_VERSION-macOS/DLAY-$DLAY_VERSION-macOS.pkg"
-          sudo installer -pkg "$pkg" -target /
+          # -dumplog: the Installer's own account of what it did, for the log of this step
+          sudo installer -dumplog -pkg "$pkg" -target /
+          pkgutil --pkg-info com.dlayaudio.dlay.pkg || true
 
           # The build folder holds bundles with the same identifiers: this also shows that
           # the package installs to its own paths and does not "relocate" to those.
@@ -332,8 +336,10 @@ jobs:
 
       # On a public repository every signed-in GitHub user can download what is listed
       # under "Artifacts" on a run's page. The installers now live in the draft release, so
-      # remove them from there - this run's and any left by earlier runs.
+      # remove them from there - this run's and any left by earlier runs. Also when a job
+      # failed and the build is not kept: its other systems' installers would stay there.
       - name: Remove the build artifacts
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

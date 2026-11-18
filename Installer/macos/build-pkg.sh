@@ -43,25 +43,33 @@ done
 # identifier anywhere on the disk (a build folder, a copy in the user's own Library) it
 # updates that one instead of installing to the path given here. Switch that off, and let
 # any version be installed over any other.
-pkgbuild --analyze --root "$root" "$work/components.plist" > /dev/null
+#
+# pkgbuild lists the bundles it treats as such; a key it did not write for one is added.
+# A bundle it does not list is packaged as plain files, which are never relocated.
+buddy=/usr/libexec/PlistBuddy
+pkgbuild --analyze --root "$root" "$work/components.plist"
 count=0
-while /usr/libexec/PlistBuddy -c "Set :$count:BundleIsRelocatable false" "$work/components.plist" 2> /dev/null; do
-    /usr/libexec/PlistBuddy -c "Set :$count:BundleIsVersionChecked false" "$work/components.plist"
-    echo "fixed in place: $(/usr/libexec/PlistBuddy -c "Print :$count:RootRelativeBundlePath" "$work/components.plist")"
+while path="$("$buddy" -c "Print :$count:RootRelativeBundlePath" "$work/components.plist" 2> /dev/null)"; do
+    for key in BundleIsRelocatable BundleIsVersionChecked; do
+        "$buddy" -c "Set :$count:$key false" "$work/components.plist" 2> /dev/null \
+            || "$buddy" -c "Add :$count:$key bool false" "$work/components.plist"
+    done
+    echo "installs in place: $path"
     count=$((count + 1))
 done
-[ "$count" -ge 1 ] || { echo "no bundles were found in the package root" >&2; exit 1; }
+echo "bundles listed by pkgbuild: $count"
+plutil -p "$work/components.plist"
 
 pkgbuild --root "$root" \
          --component-plist "$work/components.plist" \
          --identifier com.dlayaudio.dlay.pkg \
          --version "$version" \
          --install-location / \
-         "$work/DLAY.pkg" > /dev/null
+         "$work/DLAY.pkg"
 
 # Wrap it in a product archive that says which processors it is for. Without that the
 # Installer assumes Intel only and offers to install Rosetta on an Apple Silicon Mac.
-productbuild --synthesize --package "$work/DLAY.pkg" "$work/distribution.xml" > /dev/null
+productbuild --synthesize --package "$work/DLAY.pkg" "$work/distribution.xml"
 
 python3 - "$work/distribution.xml" "$version" <<'PY'
 import re, sys
@@ -77,8 +85,12 @@ if found != 1:
 open(path, "w", encoding="utf-8").write(xml)
 PY
 
+cat "$work/distribution.xml"
+
 mkdir -p "$(dirname "$output")"
-productbuild --distribution "$work/distribution.xml" --package-path "$work" "$output" > /dev/null
+productbuild --distribution "$work/distribution.xml" --package-path "$work" "$output"
 
 echo "built $output ($(du -h "$output" | cut -f1))"
-pkgutil --payload-files "$output" | grep -E "(DLAY\.vst3|DLAY\.component|DLAY\.app)$" | sed 's/^/  installs /'
+# For the reader of the log only: what the package holds. (The workflow installs it next.)
+pkgutil --payload-files "$output" 2> /dev/null | grep -E "(DLAY\.vst3|DLAY\.component|DLAY\.app)$" | sed 's/^/  installs /' \
+    || echo "  (the list of files could not be read from the package)"
