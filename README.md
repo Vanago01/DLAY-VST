@@ -17,6 +17,12 @@ instrument.
 |---|---|
 | ![Compact view](docs/dlay-compact.png) | ![Preset library](docs/dlay-presets.png) |
 
+## Download
+
+Installers for Windows and macOS are free for members of VBEATS: sign in on the VBEATS
+website and open the DLAY page. On Linux, or if you would rather build it yourself, the
+source in this repository builds in a few minutes: see [Quick start](#quick-start).
+
 ---
 
 ## Contents
@@ -32,6 +38,7 @@ instrument.
 - [Presets](#presets)
 - [Engineering notes](#engineering-notes)
 - [Verification status](#verification-status)
+- [Licence](#licence)
 - [Licences](#licences)
 
 ---
@@ -108,11 +115,16 @@ sudo apt-get install build-essential cmake ninja-build libasound2-dev libx11-dev
 | `DLAY_SANITIZE` | *(empty)* | `address` (AddressSanitizer + UBSan) or `thread` (ThreadSanitizer) for the whole build, JUCE included. For running `DLAY_Tests`, not for releases. GCC / Clang |
 
 A GitHub Actions workflow (`.github/workflows/build.yml`) builds and tests all three
-platforms on every push, loads the built plug-in in a small host on each, and makes one
-archive per system (plug-ins, standalone and `INSTALL.txt`). Every successful build of the
-main branch is published on the repository's Releases page as "DLAY - latest build". For a
-numbered release, push a tag such as `v1.1.0`, or start the workflow by hand and type the
-version number.
+platforms on every push and loads the built plug-in in a small host on each. It then makes
+the installers - a setup program for Windows (`Installer/windows/DLAY.iss`, Inno Setup) and
+a package for macOS (`Installer/macos/build-pkg.sh`) - and uses each one the way a person
+would: installed over a copy that was put in place by hand, the installed plug-in loaded in
+the host, and on Windows uninstalled again.
+
+Every successful build of the main branch is kept as a draft release, "DLAY - latest
+build", which only people who can write to the repository see. To mark a version, start the
+workflow by hand and type the version number, or push a tag such as `v1.1.0`: that
+publishes a release that marks the source code of that version.
 
 ## Tests and tools
 
@@ -399,14 +411,23 @@ What has **not** been done, and should be before a release:
   Mac they have to be released from quarantine by hand (see `INSTALL.txt`); to hand them
   out properly they need a Developer ID signature and Apple's notarisation.
 
-## Licences
+## Licence
 
-- **DLAY source code**: yours to license as you wish.
-- **JUCE** is dual-licensed: AGPLv3, or a commercial JUCE licence. If you distribute DLAY
-  as closed-source software you need a commercial JUCE licence that matches your
-  situation; under the AGPLv3 route DLAY itself must be released under the AGPLv3. See
-  JUCE's `LICENSE.md` and <https://juce.com/get-juce>.
-- **VST** is a trademark of Steinberg Media Technologies GmbH. Distributing VST3 plug-ins
-  requires accepting Steinberg's VST3 licence terms.
+DLAY is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License](LICENSE), version 3, as published by the Free Software
+Foundation. It is distributed in the hope that it will be useful, but without any warranty.
+Using the plug-in places no conditions on the music you make with it.
+
+Copyright (C) 2026 The DLAY Authors.
+
+What DLAY is built on:
+
+- **JUCE** is licensed under the AGPLv3 or a commercial JUCE licence. This repository uses
+  it under the AGPLv3, which is why DLAY carries the same licence. Shipping a closed-source
+  product made from this code would need a commercial JUCE licence as well as the permission
+  of DLAY's authors.
+- **VST3 SDK** 3.8 (part of JUCE): MIT licence. VST is a registered trademark of Steinberg
+  Media Technologies GmbH.
+- **Audio Unit SDK** (part of JUCE): Apache License 2.0.
 - **Fonts**: Geist and Geist Mono (The Geist Project Authors), SIL Open Font License 1.1
   (text in `Assets/Fonts/OFL-Geist.txt`).

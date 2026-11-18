@@ -1,13 +1,15 @@
 name: Build DLAY
 
-# Builds and tests the plug-in on Windows, macOS and Linux.
+# Builds and tests the plug-in on Windows, macOS and Linux and makes the installers.
 #
-# Downloads:
-#   - Every successful build of the main branch is published on the repository's Releases
-#     page as "DLAY - latest build" (replaced each time).
-#   - A numbered release: push a tag such as v1.0.0, or start this workflow by hand
-#     (Actions > Build DLAY > Run workflow) and type the version number.
-#   - Every run also keeps its three archives under "Artifacts" at the bottom of its page.
+# Where the builds go:
+#   - Every successful build of the main branch is kept as a DRAFT release called
+#     "DLAY - latest build". A draft is only visible to people who can write to this
+#     repository: open the Releases page while signed in. The installers are not public
+#     here - they are handed out on the VBEATS website.
+#   - To mark a version: start this workflow by hand (Actions > Build DLAY > Run workflow)
+#     and type the version number, or push a tag such as v1.1.0. That publishes a release
+#     "DLAY 1.1.0" which marks the source code of that version (no installers attached).
 
 on:
   push:
@@ -16,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Publish this build as a numbered release, e.g. 1.0.0 (leave empty for none)"
+        description: "Mark this build as a numbered version, e.g. 1.1.0 (leave empty for none)"
         required: false
         default: ""
 
@@ -32,18 +34,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows (VST3 + Standalone)
+          - name: Windows (VST3 + Standalone, installer)
             os: windows-latest
-            package: DLAY-Windows
-          - name: macOS universal (VST3 + AU + Standalone)
+            system: Windows
+          - name: macOS universal (VST3 + AU + Standalone, installer)
             os: macos-latest
-            package: DLAY-macOS
+            system: macOS
           - name: Linux (VST3 + Standalone)
             os: ubuntu-latest
-            package: DLAY-Linux
+            system: Linux
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read the version number
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(DLAY VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version" || { echo "::error::no version found in CMakeLists.txt"; exit 1; }
+          echo "DLAY_VERSION=$version" >> "$GITHUB_ENV"
+          echo "DLAY $version"
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -75,64 +85,142 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure -R DLAY_Tests
 
-      # One archive per system, made here rather than by the upload step: that keeps the
-      # file permissions the Mac bundles need.
-      - name: Package
-        shell: bash
+      # ------------------------------------------------------------------ packages
+      # One archive per system: the installer (Windows, macOS) or the plug-in itself
+      # (Linux), with INSTALL.txt and the licence next to it.
+
+      - name: Make the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          mkdir -p "dist/${{ matrix.package }}"
-          for folder in VST3 AU Standalone; do
-            if [ -d "build/DLAY_artefacts/Release/$folder" ]; then
-              cp -R "build/DLAY_artefacts/Release/$folder" "dist/${{ matrix.package }}/"
-            fi
-          done
-          cp INSTALL.txt "dist/${{ matrix.package }}/"
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y | Out-Host }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup (ISCC.exe) was not found" }
 
-          # macOS: seal each bundle with an ad-hoc signature as the very last step. JUCE signs
-          # the VST3 before it writes moduleinfo.json into it, which leaves that seal broken;
-          # Apple Silicon only loads code whose signature is intact.
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            for bundle in "dist/${{ matrix.package }}/VST3/DLAY.vst3" \
-                          "dist/${{ matrix.package }}/AU/DLAY.component" \
-                          "dist/${{ matrix.package }}/Standalone/DLAY.app"; do
-              if [ -d "$bundle" ]; then
-                codesign --force --sign - "$bundle" || echo "::warning::could not sign $bundle"
-                codesign --verify --strict "$bundle" && echo "signature intact: $bundle"
-                echo "architectures: $(lipo -archs "$bundle/Contents/MacOS/DLAY" 2>/dev/null || echo unknown)"
-              fi
-            done
-          fi
+          $name  = "DLAY-$env:DLAY_VERSION-Windows"
+          $stage = Join-Path $PWD "dist\$name"
+          New-Item -ItemType Directory -Force $stage | Out-Null
 
-          cd dist
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a -tzip "${{ matrix.package }}.zip" "${{ matrix.package }}"
-          elif [ "$RUNNER_OS" = "macOS" ]; then
-            ditto -c -k --keepParent "${{ matrix.package }}" "${{ matrix.package }}.zip"
-          else
-            zip -qry "${{ matrix.package }}.zip" "${{ matrix.package }}"
-          fi
-          ls -l
+          & $iscc "/DAppVersion=$env:DLAY_VERSION" "/DArtefacts=$PWD\build\DLAY_artefacts\Release" "/DOutputDir=$stage" "Installer\windows\DLAY.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 
+          Copy-Item INSTALL.txt, LICENSE $stage
+          Push-Location dist
+          7z a -tzip "$name.zip" $name | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
+          Pop-Location
+          Get-ChildItem dist -Recurse -File | ForEach-Object { "{0,12:N0}  {1}" -f $_.Length, $_.FullName }
+
+      - name: Make the installer (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          name="DLAY-$DLAY_VERSION-macOS"
+          mkdir -p "dist/$name"
+          bash Installer/macos/build-pkg.sh build/DLAY_artefacts/Release "$DLAY_VERSION" "dist/$name/$name.pkg"
+          cp INSTALL.txt LICENSE "dist/$name/"
+          (cd dist && ditto -c -k --keepParent "$name" "$name.zip")
+          ls -l dist "dist/$name"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          name="DLAY-$DLAY_VERSION-Linux"
+          mkdir -p "dist/$name"
+          cp -R build/DLAY_artefacts/Release/VST3 build/DLAY_artefacts/Release/Standalone "dist/$name/"
+          cp INSTALL.txt LICENSE "dist/$name/"
+          (cd dist && zip -qry "$name.zip" "$name")
+          ls -l dist
+
+      # Kept for a few days only, as a way to get at the build of a branch. The builds of
+      # main are moved to a draft release by the job below and removed from here.
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.package }}
-          path: dist/${{ matrix.package }}.zip
+          name: DLAY-${{ matrix.system }}
+          path: dist/DLAY-${{ env.DLAY_VERSION }}-${{ matrix.system }}.zip
           if-no-files-found: error
+          retention-days: 3
 
+      # ------------------------------------------------------------------ checks
       # Loads the VST3 that was just built the way a DAW does: scan it, process audio at
       # several sample rates, save and restore its state, open the editor while audio runs.
       # After the upload, so that a build is still there to look at if this fails.
       - name: Load the plug-in in a host
         run: ctest --test-dir build -C Release --output-on-failure -R DLAY_HostCheck
 
+      # The installer, used the way a person uses it: over a copy that was put in place by
+      # hand, then the installed plug-in loaded in a host, then uninstalled again.
+      - name: Install, load and uninstall (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup  = "dist\DLAY-$env:DLAY_VERSION-Windows\DLAY-$env:DLAY_VERSION-Windows-Setup.exe"
+          $plugin = Join-Path $env:CommonProgramFiles "VST3\DLAY.vst3"
+          $app    = Join-Path $env:ProgramFiles "DLAY"
+
+          # stands in for an earlier copy made by hand, with a file the new version does not have
+          New-Item -ItemType Directory -Force "$plugin\Contents\old" | Out-Null
+          Set-Content "$plugin\Contents\old\leftover.txt" "from an earlier manual install"
+
+          $run = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/LOG=$PWD\dist\install.log"
+          if ($run.ExitCode -ne 0) { Get-Content dist\install.log -Tail 60; throw "the installer returned $($run.ExitCode)" }
+
+          if (-not (Test-Path "$plugin\Contents\x86_64-win\DLAY.vst3")) { Get-Content dist\install.log -Tail 60; throw "the plug-in was not installed to $plugin" }
+          if (Test-Path "$plugin\Contents\old") { throw "files of an earlier manual install were left behind" }
+          if (-not (Test-Path "$app\DLAY.exe")) { throw "the standalone app was not installed to $app" }
+          Get-ChildItem $plugin -Recurse -File | ForEach-Object { "{0,12:N0}  {1}" -f $_.Length, $_.FullName }
+
+          # the installed plug-in, loaded the way a DAW loads it
+          & "build\DLAY_HostCheck_artefacts\Release\DLAY_HostCheck.exe" $plugin
+          if ($LASTEXITCODE -ne 0) { throw "the installed plug-in failed the host check" }
+
+          $uninstaller = Get-ChildItem "$app\unins*.exe" | Select-Object -First 1
+          if (-not $uninstaller) { throw "no uninstaller was installed" }
+          Start-Process -FilePath $uninstaller.FullName -Wait -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          # the uninstaller hands over to a copy of itself in the temp folder: give it a moment
+          for ($i = 0; $i -lt 60 -and ((Test-Path $plugin) -or (Test-Path "$app\DLAY.exe")); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path $plugin) { throw "the uninstaller left the plug-in behind" }
+          if (Test-Path "$app\DLAY.exe") { throw "the uninstaller left the standalone app behind" }
+          Write-Host "installed, loaded in a host and uninstalled"
+
+      - name: Install and load (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pkg="dist/DLAY-$DLAY_VERSION-macOS/DLAY-$DLAY_VERSION-macOS.pkg"
+          sudo installer -pkg "$pkg" -target /
+
+          # The build folder holds bundles with the same identifiers: this also shows that
+          # the package installs to its own paths and does not "relocate" to those.
+          for bundle in "/Library/Audio/Plug-Ins/VST3/DLAY.vst3" \
+                        "/Library/Audio/Plug-Ins/Components/DLAY.component" \
+                        "/Applications/DLAY.app"; do
+            test -d "$bundle" || { echo "::error::not installed: $bundle"; exit 1; }
+            codesign --verify --strict "$bundle"
+            echo "installed, signature intact: $bundle ($(lipo -archs "$bundle/Contents/MacOS/DLAY"))"
+          done
+
+          # the installed plug-in, loaded the way a DAW loads it
+          build/DLAY_HostCheck_artefacts/Release/DLAY_HostCheck "/Library/Audio/Plug-Ins/VST3/DLAY.vst3"
+
+          # Apple's validation of the installed Audio Unit. Reported, not required: on a build
+          # machine nobody is logged in, and a new Audio Unit is not always registered there.
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          if auval -v aufx Dly1 Dlay > dist/auval.log 2>&1; then
+            echo "auval: the Audio Unit passed validation"
+            grep -E "AU VALIDATION SUCCEEDED|PASS" dist/auval.log | tail -3
+          else
+            tail -40 dist/auval.log
+            echo "::warning::auval did not pass on this machine (see the log of this step)"
+          fi
+
   release:
-    name: Publish downloads
+    name: Keep the build
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
 
     steps:
       - uses: actions/download-artifact@v4
@@ -140,26 +228,52 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish
+      - name: Keep the installers as a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          ls -l dist
+          version=$(ls dist | sed -n 's/^DLAY-\([0-9][0-9.]*\)-Windows\.zip$/\1/p')
+          test -n "$version" || { echo "::error::the Windows archive is missing"; exit 1; }
+
+          # A draft release is visible only to people who can write to the repository.
+          # The previous one is replaced: earlier drafts first (a draft has no tag, so they
+          # are found by name), then the published "latest" release of older builds, with
+          # the tag it left behind.
+          gh api "repos/$REPO/releases?per_page=100" --jq '.[] | select(.draft and .tag_name == "latest") | .id' | while read -r id; do
+            gh api -X DELETE "repos/$REPO/releases/$id" > /dev/null && echo "removed the previous draft ($id)"
+          done
+          gh release delete latest --repo "$REPO" --yes --cleanup-tag 2> /dev/null || true
+          gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" --draft \
+            --title "DLAY $version - latest build (draft, not public)" \
+            --notes "The newest successful build of the main branch (commit ${GITHUB_SHA::7}). This is a draft: only people who can write to this repository see it. Each archive holds the installer for one system and INSTALL.txt. Official downloads are handed out on the VBEATS website."
+
+      - name: Mark a numbered version
+        if: github.event.inputs.version != '' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          ls -l dist
-          notes="Download the archive for your system, unzip it and follow INSTALL.txt inside."
+          notes="The source code of this version of DLAY. The installers are handed out on the VBEATS website; to build it yourself, see README.md."
 
           if [ -n "$VERSION" ]; then
-            # started by hand with a version number
-            gh release create "v${VERSION#v}" dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
+            gh release create "v${VERSION#v}" --repo "$REPO" --target "$GITHUB_SHA" \
               --title "DLAY ${VERSION#v}" --notes "$notes"
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$REPO" \
-              --title "DLAY ${GITHUB_REF_NAME#v}" --notes "$notes"
           else
-            # the newest successful build of main: replace the previous one
-            gh release delete latest --repo "$REPO" --yes --cleanup-tag || true
-            gh release create latest dist/*.zip --repo "$REPO" --target "$GITHUB_SHA" \
-              --title "DLAY - latest build" \
-              --notes "The newest successful build of the main branch (commit ${GITHUB_SHA::7}). $notes"
+            gh release create "$GITHUB_REF_NAME" --repo "$REPO" --verify-tag \
+              --title "DLAY ${GITHUB_REF_NAME#v}" --notes "$notes"
           fi
+
+      # On a public repository every signed-in GitHub user can download what is listed
+      # under "Artifacts" on a run's page. The installers of main now live in the draft
+      # release, so remove them from there - this run's and any left by earlier runs.
+      - name: Remove the build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/actions/artifacts?per_page=100" --paginate --jq '.artifacts[].id' | while read -r id; do
+            gh api -X DELETE "repos/$REPO/actions/artifacts/$id" > /dev/null && echo "removed artifact $id" || echo "could not remove artifact $id"
+          done

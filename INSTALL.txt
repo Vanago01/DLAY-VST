@@ -2,33 +2,40 @@ DLAY 1.1.0 - installing
 =======================
 
 DLAY is an effect plug-in (VST3 on every system, Audio Unit on the Mac) and a standalone
-app. This archive holds the build for one system; use the section for yours.
+app. This archive holds the installer for one system; use the section for yours.
 
 
 WINDOWS
 -------
-1. Copy the folder   VST3\DLAY.vst3   to   C:\Program Files\Common Files\VST3\
-   DLAY.vst3 is a folder: copy all of it. Windows asks for administrator permission.
-2. Rescan plug-ins in your DAW.
+1. Close your DAW.
+2. Double-click the file that ends in   -Windows-Setup.exe
+3. Windows may show a blue window, "Windows protected your PC". It appears for every
+   program whose maker has not bought a signing certificate. Click   More info   and then
+   Run anyway.
+4. Click through the installer: Next, Install, Finish.
+5. Open your DAW and let it look for new plug-ins.
 
-The standalone app is   Standalone\DLAY.exe   and runs from anywhere.
+The installer puts the plug-in in   C:\Program Files\Common Files\VST3\   (the folder every
+DAW looks in) and the standalone app in the Start menu.
+To remove DLAY: Settings > Apps > Installed apps > DLAY > Uninstall.
 
 
 MAC
 ---
-1. Copy   VST3/DLAY.vst3      to   ~/Library/Audio/Plug-Ins/VST3/
-   Copy   AU/DLAY.component   to   ~/Library/Audio/Plug-Ins/Components/
-   "~/Library" is the Library folder inside your home folder. In Finder choose
-   Go > Go to Folder... and paste the path.
-2. This build is not signed by a registered Apple developer. If macOS or your DAW refuses
-   to load it, open Terminal and run these two lines once:
+1. Close your DAW.
+2. Double-click the file that ends in   -macOS.pkg
+3. macOS says it could not verify the package: it is not signed by a registered Apple
+   developer. Close that message, open   System Settings > Privacy & Security,   scroll
+   down to the line about DLAY and click   Open Anyway.
+   (On macOS 14 and earlier you can instead right-click the package and choose Open.)
+4. Click through the installer. It asks for the password of your Mac.
+5. Open your DAW and let it look for new plug-ins.
 
-       xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/DLAY.vst3
-       xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/DLAY.component
-
-3. Rescan plug-ins in your DAW.
-
-The standalone app is   Standalone/DLAY.app
+The installer puts DLAY here, for every user of the Mac:
+    /Library/Audio/Plug-Ins/VST3/DLAY.vst3
+    /Library/Audio/Plug-Ins/Components/DLAY.component     (Audio Unit: Logic, GarageBand)
+    /Applications/DLAY.app
+To remove DLAY, delete those three.
 
 
 LINUX
@@ -38,12 +45,10 @@ Copy   VST3/DLAY.vst3   to   ~/.vst3/   and rescan. The standalone is   Standalo
 
 UPDATING FROM AN EARLIER VERSION
 --------------------------------
-1. Close your DAW.
-2. Delete the old DLAY.vst3 from the folder named above (on the Mac also DLAY.component),
-   then copy the new one in, exactly as for a first installation.
-3. Open your DAW again; a rescan is normally not needed. Projects and presets made with
-   the earlier version open as before. The version number is shown at the top right of
-   the plug-in, next to the ADVANCED key.
+Close your DAW and run the installer of the new version. It replaces the old one, also a
+copy that was put in place by hand. Projects and presets made with the earlier version
+open as before. The version number is shown at the top right of the plug-in, next to the
+ADVANCED key.
 
 
 FL STUDIO
@@ -64,3 +69,10 @@ FIRST STEPS
 - ADVANCED (top right) opens the lower panel with three pages: TIME, SPACE and MOTION.
 - Too small or too large? Drag the bottom-right corner of the window, or choose
   MENU > Window size. DLAY remembers the size with your project.
+
+
+LICENCE AND SOURCE CODE
+-----------------------
+DLAY is free software under the GNU Affero General Public License, version 3: see the file
+LICENSE. Using it costs nothing and places no conditions on the music you make with it.
+The source code is at   https://github.com/Vanago01/DLAY-VST
