@@ -10,6 +10,8 @@ name: Build DLAY
 #   - If GitHub has no machine free for one system (it happens with the Macs), the build is
 #     kept without that system and says so in its title. "Re-run failed jobs" on the run's
 #     page adds it later.
+#   - To only test (for instance on the other kind of Mac): start this workflow by hand
+#     with "keep" set to false. Nothing is stored and the draft stays as it is.
 #   - To mark a version: start this workflow by hand (Actions > Build DLAY > Run workflow)
 #     and type the version number, or push a tag such as v1.1.0. That publishes a release
 #     "DLAY 1.1.0" which marks the source code of that version (no installers attached).
@@ -30,6 +32,10 @@ on:
         description: "Mac build machine: macos-latest (Apple Silicon), or macos-15-intel when those are busy"
         required: false
         default: "macos-latest"
+      keep:
+        description: "Keep this build as the draft release? Type false to only build and test"
+        required: false
+        default: "true"
 
 concurrency:
   group: build-${{ github.ref }}
@@ -263,8 +269,11 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Skipped when the workflow was started by hand with "keep" set to false: such a
+      # build is only a test, and the draft that is there stays as it is.
       - name: Keep the installers as a draft release
         id: keep
+        if: ${{ github.event.inputs.keep != 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
