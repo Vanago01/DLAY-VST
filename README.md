@@ -329,6 +329,14 @@ Run on the build machine (Linux x86_64, Ubuntu 24.04, JUCE 9.0.5):
 | `DLAY_UiSnapshot --interact` | 36 checks, 0 failures: tape and radar gestures, curve editing and freehand drawing, typed values, preset browsing and search, undo / redo, resizing, all 21 algorithms |
 | CPU | 1.7 - 3.2 % of one core per instance with every feature switched on (48 kHz, 512 samples, 2x oversampling, 2.1 GHz Xeon) |
 
+Run by the GitHub workflow on GitHub's machines, on every push:
+
+| System | Compiler | Result |
+|---|---|---|
+| Windows (windows-2025 image) | MSVC 19.51 | builds with no warnings from the project sources; `DLAY_Tests` passes; `DLAY_HostCheck` loads the built VST3 and passes |
+| macOS 26 (Apple Silicon machine, universal build for Intel and Apple Silicon) | AppleClang 21 | the same; VST3, AU and Standalone are sealed with an ad-hoc signature that verifies |
+| Linux (Ubuntu 26.04) | GCC 15.2 | the same |
+
 What the test suite pins down, among other things: echoes land on the exact sample (also
 tempo-synced, also with diffusion on); the output is identical at block sizes 1 to 1024;
 every algorithm is finite and bounded with everything turned up, from 44.1 to 192 kHz;
@@ -361,9 +369,13 @@ What has **not** been done, and should be before a release:
 
 - **Listening.** Everything above is measured, not heard. The presets were tuned against
   the engine's behaviour and level measurements; they need ears.
-- **Windows and macOS builds.** The code is plain JUCE and standard C++ and the CI workflow
-  covers both, but neither was compiled here. The AU in particular needs `auval`.
-- **Real DAWs**, and [pluginval](https://github.com/Tracktion/pluginval) as a release gate.
+- **Real DAWs.** On Windows, macOS and Linux the plug-in has been loaded by JUCE's own
+  hosting code (scan, processing, state, editor), not by a commercial DAW. The AU has not
+  been through `auval`, and [pluginval](https://github.com/Tracktion/pluginval) has not
+  been run; both belong in a release gate.
+- **Mac distribution.** The Mac builds carry an ad-hoc signature only. On another person's
+  Mac they have to be released from quarantine by hand (see `INSTALL.txt`); to hand them
+  out properly they need a Developer ID signature and Apple's notarisation.
 
 ## Licences
 
