@@ -115,7 +115,8 @@ sudo apt-get install build-essential cmake ninja-build libasound2-dev libx11-dev
 | `DLAY_SANITIZE` | *(empty)* | `address` (AddressSanitizer + UBSan) or `thread` (ThreadSanitizer) for the whole build, JUCE included. For running `DLAY_Tests`, not for releases. GCC / Clang |
 
 A GitHub Actions workflow (`.github/workflows/build.yml`) builds and tests all three
-platforms on every push and loads the built plug-in in a small host on each. It then makes
+platforms on every push (a change to this README alone starts none) and loads the built
+plug-in in a small host on each. It then makes
 the installers - a setup program for Windows (`Installer/windows/DLAY.iss`, Inno Setup) and
 a package for macOS (`Installer/macos/build-pkg.sh`) - and uses each one the way a person
 would: installed over a copy that was put in place by hand, the installed plug-in loaded in
@@ -363,12 +364,14 @@ Run on the build machine (Linux x86_64, Ubuntu 24.04, JUCE 9.0.5):
 | Interface at laptop size | on a 1366 x 768 screen the window opens whole, at 99 % (1270 x 714); names of the controls are set at 13 - 15 px. A full repaint takes 12 - 20 ms, the animated display 2 - 3 ms a frame, turning a page of the lower card about 25 ms |
 | CPU | 1.7 - 3.2 % of one core per instance with every feature switched on (48 kHz, 512 samples, 2x oversampling, 2.1 GHz Xeon) |
 
-Run by the GitHub workflow on GitHub's machines, on every push:
+Run by the GitHub workflow on GitHub's machines (the Intel Mac when a build is started by
+hand with that machine chosen, the others on every push):
 
 | System | Compiler | Result |
 |---|---|---|
 | Windows (windows-2025 image) | MSVC 19.51 | builds with no warnings from the project sources; `DLAY_Tests` passes; `DLAY_HostCheck` loads the built VST3 and passes. The installer (Inno Setup 6.7) is built, run over a copy that was put in place by hand, the installed plug-in passes `DLAY_HostCheck` again, and the uninstaller removes it |
-| macOS 26 (Apple Silicon machine, universal build for Intel and Apple Silicon) | AppleClang 21 | the same; VST3, AU and Standalone are sealed with an ad-hoc signature that verifies |
+| macOS 26 (Apple Silicon machine; universal build for Intel and Apple Silicon) | AppleClang 21 | builds with no warnings from the project sources; `DLAY_Tests` passes; `DLAY_HostCheck` loads the built VST3 and passes; VST3, AU and Standalone are sealed with an ad-hoc signature that verifies. The installer has not run on this machine yet: GitHub had none free on the day it was added |
+| macOS 15 (Intel machine; the same universal build) | AppleClang 17 | the same. The installer package (33 MB) is built and installed with Apple's `installer` while the build folder holds bundles with the same identifiers: VST3, Audio Unit and Standalone arrive in `/Library/Audio/Plug-Ins/VST3`, `/Library/Audio/Plug-Ins/Components` and `/Applications`, each holding both processor types and an intact signature; the installed VST3 passes `DLAY_HostCheck`; the installed Audio Unit passes Apple's `auval` |
 | Linux (Ubuntu 26.04) | GCC 15.2 | the same |
 
 What the test suite pins down, among other things: echoes land on the exact sample (also
