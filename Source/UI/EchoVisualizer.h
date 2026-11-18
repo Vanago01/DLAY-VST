@@ -6,7 +6,8 @@
 namespace dlay::ui
 {
 
-/** The centrepiece: a live picture of the delay's tape loop.
+/** The centrepiece: a live picture of the delay's tape loop, on a screen that looks out
+    into space.
 
     Left: the tape itself. Sound is written at the REC head on the left and travels to the
     right; where it passes a PLAY head you hear it, and the feedback rail on top carries it
@@ -50,6 +51,9 @@ private:
     void paintTape (juce::Graphics&);
     void paintRadar (juce::Graphics&);
     void paintStatus (juce::Graphics&);
+    void paintTwinkles (juce::Graphics&);
+    void paintToast (juce::Graphics&);
+    void radarGeometry (juce::Point<float>& centre, float& radius) const;
     float envelopeAt (const std::array<std::atomic<float>, (size_t) VisualData::kRingSize>& ring, float delayMs, float spanMs) const;
     float xForDelay (float delayMs) const noexcept;
     juce::Point<float> orbitPoint (int shape, float phase, float amount) const;
@@ -86,6 +90,10 @@ private:
     std::array<Blip, 24> blips {};
     int blipPos = 0;
     float blipCooldown = 0.0f;
+
+    // the algorithm's description, shown for a few seconds after it changes
+    int toastMode = -1;
+    float toastLife = 0.0f;
 
     // interaction
     Drag drag = Drag::none;

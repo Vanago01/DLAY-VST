@@ -6,6 +6,8 @@ namespace dlay::ui
 namespace
 {
     constexpr float kPiF = juce::MathConstants<float>::pi;
+    constexpr float kCorner = 14.0f;            // of the screen
+    constexpr float kToastSeconds = 5.0f;
 
     juce::String formatMs (float ms)
     {
@@ -23,7 +25,7 @@ EchoVisualizer::EchoVisualizer (DlayAudioProcessor& p)
                 "Drag left/right to change the time, up/down to change the feedback.\n"
                 "Drag inside the ORBIT radar to set its size; double-click it for the next shape.");
 
-    setOpaque (true);           // paints every pixel itself, so the panels behind it are never redrawn
+    setOpaque (true);           // paints every pixel itself, so the card behind it is never redrawn
 
     for (auto& t : trail)
         t = {};
@@ -42,11 +44,11 @@ EchoVisualizer::EchoVisualizer (DlayAudioProcessor& p)
 
 void EchoVisualizer::resized()
 {
-    screen = getLocalBounds().toFloat().reduced (8.0f);
+    screen = getLocalBounds().toFloat().reduced (1.5f);
 
-    auto inner = screen.reduced (10.0f, 7.0f);
-    statusBar = inner.removeFromTop (17.0f);
-    inner.removeFromTop (5.0f);
+    auto inner = screen.reduced (14.0f, 11.0f);
+    statusBar = inner.removeFromTop (22.0f);
+    inner.removeFromTop (6.0f);
 
     const float radarW = juce::jmin (inner.getHeight() * 0.98f, inner.getWidth() * 0.35f);
     radarBox = inner.removeFromRight (radarW);
@@ -119,6 +121,13 @@ juce::Point<float> EchoVisualizer::orbitPoint (int shape, float phase, float amo
     }
 
     return { x * amount, y * amount };
+}
+
+void EchoVisualizer::radarGeometry (juce::Point<float>& centre, float& radius) const
+{
+    constexpr float titleH = 16.0f, captionH = 18.0f;
+    radius = juce::jmin (radarBox.getWidth(), radarBox.getHeight() - captionH - titleH) * 0.5f - 6.0f;
+    centre = { radarBox.getCentreX(), radarBox.getY() + titleH + radius + 4.0f };
 }
 
 // ============================================================================
@@ -199,76 +208,62 @@ void EchoVisualizer::tick (float dt)
     for (auto& b : blips)
         b.life = juce::jmax (0.0f, b.life - dt / 1.6f);
 
+    // a new algorithm introduces itself
+    const int mode = vis.mode.load (std::memory_order_relaxed);
+
+    if (mode != toastMode)
+    {
+        if (toastMode >= 0)
+            toastLife = kToastSeconds;
+
+        toastMode = mode;
+    }
+
+    toastLife = juce::jmax (0.0f, toastLife - dt);
+
     repaint();
 }
 
 // ============================================================================
 void EchoVisualizer::paintBackground (juce::Graphics& g)
 {
-    const auto b = getLocalBounds().toFloat();
-
-    g.fillAll (col::bg);
-
-    // bezel
-    g.setColour (juce::Colours::black);
-    g.fillRoundedRectangle (b, 9.0f);
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3e44), 0.0f, b.getY(), juce::Colour (0xff141618), 0.0f, b.getBottom(), false));
-    g.fillRoundedRectangle (b.reduced (1.0f), 8.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.9f));
-    g.fillRoundedRectangle (screen.expanded (2.5f), 7.5f);
-
-    drawScreen (g, screen, 6.0f);
+    g.fillAll (col::card);                      // the rim: this screen is set into a white card
+    drawScreen (g, screen, kCorner);
 
     juce::Graphics::ScopedSaveState state (g);
     juce::Path clip;
-    clip.addRoundedRectangle (screen, 6.0f);
+    clip.addRoundedRectangle (screen, kCorner);
     g.reduceClipRegion (clip);
 
-    // faint phosphor wash and graticule
-    g.setGradientFill (juce::ColourGradient (juce::Colour (0x18ffb03a), screen.getCentreX(), screen.getCentreY(),
-                                             juce::Colours::transparentBlack, screen.getX(), screen.getY(), true));
-    g.fillRect (screen);
+    drawStars (g, screen, 0xD1A7u, 110);
 
-    g.setColour (col::cyan.withAlpha (0.035f));
-    for (float x = screen.getX() + 8.0f; x < screen.getRight(); x += 16.0f)
-        g.drawVerticalLine (juce::roundToInt (x), screen.getY(), screen.getBottom());
-    for (float y = screen.getY() + 8.0f; y < screen.getBottom(); y += 16.0f)
-        g.drawHorizontalLine (juce::roundToInt (y), screen.getX(), screen.getRight());
+    // a faint chart grid
+    g.setColour (juce::Colours::white.withAlpha (0.022f));
+    for (float x = screen.getX() + 12.0f; x < screen.getRight(); x += 24.0f)
+        g.fillRect (x, screen.getY(), 1.0f, screen.getHeight());
+    for (float y = screen.getY() + 12.0f; y < screen.getBottom(); y += 24.0f)
+        g.fillRect (screen.getX(), y, screen.getWidth(), 1.0f);
 }
 
 void EchoVisualizer::paintOverlay (juce::Graphics& g)
 {
-    const auto b = getLocalBounds().toFloat();
+    juce::Graphics::ScopedSaveState state (g);
+    juce::Path clip;
+    clip.addRoundedRectangle (screen, kCorner);
+    g.reduceClipRegion (clip);
 
-    {
-        juce::Graphics::ScopedSaveState state (g);
-        juce::Path clip;
-        clip.addRoundedRectangle (screen, 6.0f);
-        g.reduceClipRegion (clip);
+    // depth: the picture falls away into the dark at the sides
+    const float v = 34.0f;
+    g.setGradientFill (juce::ColourGradient (col::space.withAlpha (0.55f), screen.getX(), 0.0f, col::space.withAlpha (0.0f), screen.getX() + v, 0.0f, false));
+    g.fillRect (screen.withWidth (v));
+    g.setGradientFill (juce::ColourGradient (col::space.withAlpha (0.55f), screen.getRight(), 0.0f, col::space.withAlpha (0.0f), screen.getRight() - v, 0.0f, false));
+    g.fillRect (screen.withLeft (screen.getRight() - v));
 
-        // CRT: scan lines, vignette, glass
-        g.setColour (juce::Colours::black.withAlpha (0.13f));
-        for (float y = screen.getY(); y < screen.getBottom(); y += 3.0f)
-            g.fillRect (screen.getX(), y, screen.getWidth(), 1.0f);
-
-        const float v = 46.0f;
-        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.5f), screen.getX(), 0.0f, juce::Colours::transparentBlack, screen.getX() + v, 0.0f, false));
-        g.fillRect (screen.withWidth (v));
-        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.5f), screen.getRight(), 0.0f, juce::Colours::transparentBlack, screen.getRight() - v, 0.0f, false));
-        g.fillRect (screen.withLeft (screen.getRight() - v));
-        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.45f), 0.0f, screen.getBottom(), juce::Colours::transparentBlack, 0.0f, screen.getBottom() - v, false));
-        g.fillRect (screen.withTop (screen.getBottom() - v));
-
-        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.045f), screen.getX(), screen.getY(),
-                                                 juce::Colours::transparentWhite, screen.getX() + screen.getWidth() * 0.4f, screen.getY() + screen.getHeight() * 0.7f, false));
-        g.fillRect (screen);
-    }
-
-    g.setColour (juce::Colours::white.withAlpha (0.10f));
-    g.drawRoundedRectangle (b.reduced (1.0f), 8.0f, 0.8f);
+    g.setColour (juce::Colours::white.withAlpha (0.08f));
+    g.drawRoundedRectangle (screen.reduced (0.6f), kCorner - 0.6f, 1.0f);
 }
 
-/** The bezel, glass and CRT texture never change, so they are rendered once per size at
+/** The rim, the haze and the stars never change, so they are rendered once per size at
     the display's real pixel density and blitted; only the tape and the radar are redrawn. */
 void EchoVisualizer::ensureLayers (float scale)
 {
@@ -312,16 +307,44 @@ void EchoVisualizer::paint (juce::Graphics& g)
 
     {
         juce::Graphics::ScopedSaveState state (g);
-        g.reduceClipRegion (screen.toNearestInt());
+        juce::Path clip;
+        clip.addRoundedRectangle (screen, kCorner);
+        g.reduceClipRegion (clip);
+
+        paintTwinkles (g);
         paintStatus (g);
         paintTape (g);
         paintRadar (g);
+        paintToast (g);
     }
 
     blit (overlayLayer);
 }
 
 // ============================================================================
+/** A handful of stars that slowly brighten and fade. */
+void EchoVisualizer::paintTwinkles (juce::Graphics& g)
+{
+    for (uint32_t i = 0; i < 16; ++i)
+    {
+        const float x = screen.getX() + (float) hash01 (i, 0x57A1u) * screen.getWidth();
+        const float y = screen.getY() + (float) hash01 (i, 0x57A2u) * screen.getHeight();
+        const float speed = 0.5f + 1.4f * (float) hash01 (i, 0x57A3u);
+        const float wave = 0.5f + 0.5f * std::sin (time * speed + (float) i * 1.7f);
+        const float a = wave * wave * wave;
+
+        if (a < 0.03f)
+            continue;
+
+        const float arm = 2.0f + 3.5f * a;
+        g.setColour (col::star.withAlpha (0.55f * a));
+        g.fillRect (x - arm, y - 0.4f, 2.0f * arm, 0.8f);
+        g.fillRect (x - 0.4f, y - arm, 0.8f, 2.0f * arm);
+        g.setColour (col::star.withAlpha (0.9f * a));
+        g.fillEllipse (x - 1.0f, y - 1.0f, 2.0f, 2.0f);
+    }
+}
+
 void EchoVisualizer::paintStatus (juce::Graphics& g)
 {
     const float timeL = vis.timeMsL.load (std::memory_order_relaxed);
@@ -330,37 +353,59 @@ void EchoVisualizer::paintStatus (juce::Graphics& g)
     const float bpm   = vis.bpm.load (std::memory_order_relaxed);
     const float pitch = vis.pitchSt.load (std::memory_order_relaxed);
     const bool frozen = vis.freeze.load (std::memory_order_relaxed) > 0.5f;
+    const bool infinite = pInfinite->load() > 0.5f;
     const int mode    = vis.mode.load (std::memory_order_relaxed);
 
     auto r = statusBar;
-    const auto titleFont = font (FontKind::bold, 13.0f, 0.2f);
+
+    // state badge on the right; the read-outs get what is left
+    if (frozen || infinite)
+    {
+        const juce::String text = frozen ? "FROZEN" : "INFINITE";
+        const auto f = font (FontKind::bold, 11.0f, 0.09f);
+        const auto badge = r.removeFromRight (textWidth (f, text) + 22.0f).withSizeKeepingCentre (textWidth (f, text) + 22.0f, 20.0f);
+
+        if (frozen)
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff59b8ff), badge.getX(), 0.0f, col::purple, badge.getRight(), 0.0f, false));
+        else
+            g.setGradientFill (accentGradient (badge));
+
+        g.fillRoundedRectangle (badge, 10.0f);
+        g.setFont (f);
+        g.setColour (juce::Colours::white);
+        g.drawText (text, badge, juce::Justification::centred, false);
+        r.removeFromRight (8.0f);
+    }
+
+    const auto titleFont = font (FontKind::heavy, 15.0f, 0.03f);
     const juce::String title = modeInfo (mode).name;
+    drawGlowText (g, title, r.removeFromLeft (textWidth (titleFont, title) + 16.0f), juce::Justification::centredLeft, titleFont, col::star);
 
-    drawGlowText (g, title, r.removeFromLeft (textWidth (titleFont, title) + 10.0f), juce::Justification::centredLeft, titleFont, col::cream);
+    const auto keyFont = capsFont (10.5f);
+    const auto valueFont = monoFont (12.5f);
 
-    const auto f = monoFont (10.5f);
     const auto item = [&] (const juce::String& key, const juce::String& value, juce::Colour c)
     {
-        g.setFont (f);
-        g.setColour (col::creamFaint);
-        const float kw = textWidth (f, key) + 5.0f;
+        const float kw = textWidth (keyFont, key) + 6.0f;
+        const float vw = textWidth (valueFont, value) + 14.0f;
+
+        if (r.getWidth() < kw + vw - 10.0f)
+            return;                                 // no room: leave it out rather than squeeze it
+
+        g.setFont (keyFont);
+        g.setColour (col::starFaint);
         g.drawText (key, r.removeFromLeft (kw), juce::Justification::centredLeft, false);
-        const float vw = textWidth (f, value) + 14.0f;
-        drawGlowText (g, value, r.removeFromLeft (vw), juce::Justification::centredLeft, f, c);
+        g.setFont (valueFont);
+        g.setColour (c);
+        g.drawText (value, r.removeFromLeft (vw), juce::Justification::centredLeft, false);
     };
 
-    r.removeFromLeft (6.0f);
-    item ("TIME", std::abs (timeL - timeR) > 0.6f ? formatMs (timeL) + " / " + formatMs (timeR) : formatMs (timeL), col::amber);
-    item ("FB", juce::String (juce::roundToInt (fb * 100.0f)) + "%", fb > 1.0f ? col::red : col::amber);
-    item ("BPM", juce::String (bpm, 1), col::amber);
+    item ("TIME", std::abs (timeL - timeR) > 0.6f ? formatMs (timeL) + " / " + formatMs (timeR) : formatMs (timeL), col::star);
+    item ("FB", juce::String (juce::roundToInt (fb * 100.0f)) + "%", fb > 1.0f ? col::hot : col::star);
+    item ("BPM", juce::String (bpm, 1), col::star);
 
     if (std::abs (pitch) > 0.01f)
-        item ("PITCH", (pitch > 0.0f ? "+" : "") + juce::String (pitch, 1), col::cyan);
-
-    if (frozen)
-        drawGlowText (g, "FROZEN", statusBar, juce::Justification::centredRight, font (FontKind::bold, 12.0f, 0.2f), col::cyan);
-    else if (pInfinite->load() > 0.5f)
-        drawGlowText (g, "INFINITE", statusBar, juce::Justification::centredRight, font (FontKind::bold, 12.0f, 0.2f), col::orange);
+        item ("PITCH", (pitch > 0.0f ? "+" : "") + juce::String (pitch, 1), col::ice);
 }
 
 // ============================================================================
@@ -394,32 +439,32 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
         }
     }
 
-    const float railH = 22.0f, rulerH = 15.0f, gap = 7.0f;
+    const float railH = 25.0f, rulerH = 19.0f, gap = 8.0f;
     const float laneH = (field.getHeight() - railH - rulerH - gap) * 0.5f;
     const auto laneL = juce::Rectangle<float> (tapeX0, field.getY() + railH, w, laneH);
     const auto laneR = laneL.translated (0.0f, laneH + gap);
-    const auto tapeColour = frozen ? col::cyan : col::amber;
+
+    // left is pink, right is purple; a frozen tape turns to ice
+    const auto colourL = frozen ? col::ice : col::pink;
+    const auto colourR = frozen ? col::ice.interpolatedWith (col::purple, 0.5f) : col::purple;
 
     // ---- lanes
     const auto drawLane = [&] (juce::Rectangle<float> lane, const std::array<std::atomic<float>, (size_t) VisualData::kRingSize>& ring,
-                               float headMs, float chainMs, const char* name)
+                               float headMs, float chainMs, const char* name, juce::Colour tapeColour)
     {
-        g.setColour (juce::Colours::black.withAlpha (0.35f));
-        g.fillRect (lane);
-        g.setColour (col::creamFaint.withAlpha (0.28f));
-        g.drawHorizontalLine (juce::roundToInt (lane.getCentreY()), lane.getX(), lane.getRight());
-        g.setColour (col::creamFaint.withAlpha (0.18f));
-        g.drawHorizontalLine (juce::roundToInt (lane.getY()), lane.getX(), lane.getRight());
-        g.drawHorizontalLine (juce::roundToInt (lane.getBottom()), lane.getX(), lane.getRight());
+        g.setColour (juce::Colours::white.withAlpha (0.032f));
+        g.fillRoundedRectangle (lane, 5.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.10f));
+        g.fillRect (lane.getX(), lane.getCentreY() - 0.5f, lane.getWidth(), 1.0f);
 
-        g.setFont (font (FontKind::bold, 11.0f, 0.1f));
-        g.setColour (col::creamDim);
-        g.drawText (name, juce::Rectangle<float> (field.getX(), lane.getCentreY() - 7.0f, 18.0f, 14.0f), juce::Justification::centred, false);
+        g.setFont (font (FontKind::bold, 12.5f, 0.0f));
+        g.setColour (tapeColour);
+        g.drawText (name, juce::Rectangle<float> (field.getX(), lane.getCentreY() - 9.0f, 20.0f, 18.0f), juce::Justification::centred, false);
 
         constexpr float step = 2.0f;
         const int n = (int) (w / step);
         const float spanMs = viewMs * step / w;
-        const float cy = lane.getCentreY(), maxHalf = lane.getHeight() * 0.5f - 2.0f;
+        const float cy = lane.getCentreY(), maxHalf = lane.getHeight() * 0.5f - 3.0f;
 
         juce::Path top, body;
         std::vector<float> halves ((size_t) n + 1);
@@ -428,7 +473,7 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
         {
             const float onTape = viewMs * (float) i * step / w - chainMs;       // < 0: still inside the chain
             const float env = onTape >= 0.0f ? envelopeAt (ring, onTape, spanMs) : 0.0f;
-            halves[(size_t) i] = juce::jmax (0.5f, std::pow (juce::jmin (1.0f, env), 0.55f) * maxHalf);
+            halves[(size_t) i] = juce::jmax (0.6f, std::pow (juce::jmin (1.0f, env), 0.55f) * maxHalf);
         }
 
         // the stretch where the sound is still inside the processing chain
@@ -437,18 +482,18 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
         if (chainW > 5.0f)
         {
             const auto zone = lane.withWidth (juce::jmin (chainW, w));
-            g.setColour (col::cyan.withAlpha (0.05f));
+            g.setColour (col::ice.withAlpha (0.05f));
             g.fillRect (zone);
-            g.setColour (col::cyan.withAlpha (0.16f));
+            g.setColour (col::ice.withAlpha (0.18f));
             for (float x = zone.getX() + 3.0f; x < zone.getRight(); x += 5.0f)
                 g.drawLine (x, zone.getBottom() - 2.0f, juce::jmin (zone.getRight(), x + 6.0f), zone.getBottom() - 2.0f - juce::jmin (6.0f, zone.getRight() - x), 0.8f);
-            g.drawVerticalLine (juce::roundToInt (zone.getRight()), zone.getY(), zone.getBottom());
+            g.fillRect (zone.getRight() - 0.5f, zone.getY(), 1.0f, zone.getHeight());
 
-            if (chainW > 44.0f)
+            if (chainW > 84.0f)
             {
-                g.setFont (font (FontKind::semiBold, 7.5f, 0.18f));
-                g.setColour (col::cyan.withAlpha (0.55f));
-                g.drawText ("IN THE CHAIN", zone.reduced (4.0f, 2.0f).withHeight (9.0f), juce::Justification::centredLeft, false);
+                g.setFont (capsFont (9.5f));
+                g.setColour (col::ice.withAlpha (0.7f));
+                g.drawText ("IN THE CHAIN", zone.reduced (5.0f, 3.0f).withHeight (12.0f), juce::Justification::centredLeft, false);
             }
         }
 
@@ -471,40 +516,40 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
 
         // bright up to the play head, dim once it has been heard
         const float headProp = juce::jlimit (0.002f, 0.996f, (headMs + chainMs) / juce::jmax (1.0f, viewMs));
-        juce::ColourGradient grad (tapeColour.withAlpha (0.78f), lane.getX(), 0.0f, tapeColour.withAlpha (0.10f), lane.getRight(), 0.0f, false);
-        grad.addColour (headProp, tapeColour.withAlpha (0.55f));
-        grad.addColour (juce::jmin (0.999f, headProp + 0.003f), tapeColour.withAlpha (0.16f));
+        juce::ColourGradient grad (tapeColour.withAlpha (0.85f), lane.getX(), 0.0f, tapeColour.withAlpha (0.10f), lane.getRight(), 0.0f, false);
+        grad.addColour (headProp, tapeColour.withAlpha (0.60f));
+        grad.addColour (juce::jmin (0.999f, headProp + 0.003f), tapeColour.withAlpha (0.18f));
         g.setGradientFill (grad);
         g.fillPath (body);
 
-        g.setColour (tapeColour.withAlpha (0.55f));
+        g.setColour (tapeColour.interpolatedWith (juce::Colours::white, 0.35f).withAlpha (0.65f));
         g.strokePath (top, juce::PathStrokeType (1.0f));
     };
 
-    drawLane (laneL, vis.ringL, headL, chainL, "L");
-    drawLane (laneR, vis.ringR, headR, chainR, "R");
+    drawLane (laneL, vis.ringL, headL, chainL, "L", colourL);
+    drawLane (laneR, vis.ringR, headR, chainR, "R", colourR);
 
     // ---- ruler
     {
         static constexpr float steps[] = { 5.0f, 10.0f, 25.0f, 50.0f, 100.0f, 250.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f };
         float stepMs = steps[9];
         for (const float s : steps)
-            if (viewMs / s <= 8.0f) { stepMs = s; break; }
+            if (viewMs / s <= 7.0f) { stepMs = s; break; }
 
-        const float y = laneR.getBottom() + 3.0f;
-        g.setFont (monoFont (8.5f));
+        const float y = laneR.getBottom() + 4.0f;
+        g.setFont (monoFont (11.0f));
 
         for (float ms = 0.0f; ms <= viewMs; ms += stepMs)
         {
             const float x = xForDelay (ms);
-            g.setColour (col::creamFaint.withAlpha (0.8f));
-            g.drawLine (x, y, x, y + 4.0f, 1.0f);
+            g.setColour (col::starFaint.withAlpha (0.8f));
+            g.fillRect (x - 0.5f, y, 1.0f, 4.0f);
 
-            if (ms > 0.0f && x < tapeX1 - 12.0f)
+            if (ms > 0.0f && x < tapeX1 - 16.0f)
             {
-                g.setColour (col::creamFaint);
+                g.setColour (col::starFaint);
                 g.drawText (ms >= 1000.0f ? juce::String (ms / 1000.0f, 1) + "s" : juce::String (juce::roundToInt (ms)),
-                            juce::Rectangle<float> (x - 20.0f, y + 4.0f, 40.0f, 9.0f), juce::Justification::centred, false);
+                            juce::Rectangle<float> (x - 24.0f, y + 4.0f, 48.0f, 12.0f), juce::Justification::centred, false);
             }
         }
 
@@ -512,12 +557,12 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
         const float beatMs = 60000.0f / juce::jmax (20.0f, vis.bpm.load (std::memory_order_relaxed));
         if (viewMs / beatMs <= 24.0f)
         {
-            g.setColour (col::cyan.withAlpha (0.5f));
+            g.setColour (col::purple.withAlpha (0.75f));
             for (float ms = beatMs; ms <= viewMs; ms += beatMs)
             {
                 const float x = xForDelay (ms);
                 juce::Path d;
-                d.addQuadrilateral (x, y - 2.6f, x + 2.2f, y, x, y + 2.6f, x - 2.2f, y);
+                d.addQuadrilateral (x, y - 3.0f, x + 2.6f, y, x, y + 3.0f, x - 2.6f, y);
                 g.fillPath (d);
             }
         }
@@ -541,43 +586,43 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
         {
             case VisualData::headTap:
             {
-                g.setColour (col::cream.withAlpha (0.25f + 0.45f * a));
-                g.drawLine (x, laneL.getY(), x, laneR.getBottom(), 1.0f);
+                g.setColour (col::star.withAlpha (0.22f + 0.45f * a));
+                g.fillRect (x - 0.5f, laneL.getY(), 1.0f, laneR.getBottom() - laneL.getY());
                 juce::Path d;
-                d.addQuadrilateral (x, yPan - 4.5f, x + 4.0f, yPan, x, yPan + 4.5f, x - 4.0f, yPan);
-                g.setColour (col::cream.withAlpha (0.5f + 0.5f * a));
+                d.addQuadrilateral (x, yPan - 5.0f, x + 4.4f, yPan, x, yPan + 5.0f, x - 4.4f, yPan);
+                g.setColour (col::star.withAlpha (0.5f + 0.5f * a));
                 g.fillPath (d);
                 break;
             }
 
             case VisualData::headCollapse:
             {
-                g.setColour (col::orange.withAlpha (0.2f + 0.6f * a));
+                g.setColour (col::pink.withAlpha (0.25f + 0.65f * a));
                 for (float y = laneL.getY(); y < laneR.getBottom(); y += 5.0f)
-                    g.drawLine (x, y, x, juce::jmin (laneR.getBottom(), y + 2.5f), 1.0f);
-                g.fillEllipse (x - 2.6f, yPan - 2.6f, 5.2f, 5.2f);
+                    g.fillRect (x - 0.5f, y, 1.0f, juce::jmin (2.5f, laneR.getBottom() - y));
+                g.fillEllipse (x - 2.8f, yPan - 2.8f, 5.6f, 5.6f);
                 break;
             }
 
             case VisualData::headGhost:
             {
-                g.setColour (col::cyan.withAlpha (0.25f + 0.3f * a));
+                g.setColour (col::ice.withAlpha (0.25f + 0.3f * a));
                 for (float y = laneL.getY(); y < laneR.getBottom(); y += 4.0f)
                     g.fillRect (x - 0.5f, y, 1.0f, 1.4f);
                 const float wob = 2.5f * std::sin (time * 2.3f + (float) i);
-                g.setColour (col::cyan.withAlpha (0.18f));
-                g.fillEllipse (x - 8.0f, yPan + wob - 8.0f, 16.0f, 16.0f);
-                g.setColour (col::cyan.withAlpha (0.75f));
-                g.drawEllipse (x - 3.5f, yPan + wob - 3.5f, 7.0f, 7.0f, 1.0f);
+                g.setColour (col::ice.withAlpha (0.16f));
+                g.fillEllipse (x - 9.0f, yPan + wob - 9.0f, 18.0f, 18.0f);
+                g.setColour (col::ice.withAlpha (0.8f));
+                g.drawEllipse (x - 3.8f, yPan + wob - 3.8f, 7.6f, 7.6f, 1.1f);
                 break;
             }
 
             case VisualData::headReverse:
             {
-                g.setColour (col::cyan.withAlpha (0.4f + 0.5f * a));
+                g.setColour (col::ice.withAlpha (0.4f + 0.5f * a));
                 g.drawLine (x, laneL.getY() - 2.0f, x, laneR.getBottom() + 2.0f, 1.2f);
                 juce::Path arrow;
-                arrow.addTriangle (x - 6.0f, laneL.getY() - 6.0f, x, laneL.getY() - 10.0f, x, laneL.getY() - 2.0f);
+                arrow.addTriangle (x - 6.5f, laneL.getY() - 6.0f, x, laneL.getY() - 10.5f, x, laneL.getY() - 1.5f);
                 g.fillPath (arrow);
                 break;
             }
@@ -585,14 +630,14 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
             case VisualData::headGrain:
             {
                 const float len = 3.0f + 12.0f * a;
-                g.setColour (col::cyan.withAlpha (0.35f + 0.6f * a));
+                g.setColour (col::ice.withAlpha (0.35f + 0.6f * a));
                 g.drawLine (x, yPan - len, x, yPan + len, 1.6f);
                 break;
             }
 
             case VisualData::headSlice:
             {
-                g.setColour (col::cyan.withAlpha (0.4f + 0.5f * a));
+                g.setColour (col::ice.withAlpha (0.4f + 0.5f * a));
                 g.drawLine (x, laneL.getY() - 2.0f, x, laneR.getBottom() + 2.0f, 1.4f);
                 g.drawLine (x - 4.0f, laneL.getY() - 2.0f, x + 4.0f, laneL.getY() - 2.0f, 1.4f);
                 g.drawLine (x - 4.0f, laneR.getBottom() + 2.0f, x + 4.0f, laneR.getBottom() + 2.0f, 1.4f);
@@ -606,35 +651,34 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
     // ---- REC head
     {
         const float x = tapeX0;
-        const auto recColour = frozen ? col::cyan : col::red;
-        g.setColour (col::cream.withAlpha (0.85f));
-        g.drawLine (x, laneL.getY() - 3.0f, x, laneR.getBottom() + 3.0f, 1.6f);
-        drawLed (g, { field.getX() + 6.0f, field.getY() + 6.0f }, 2.6f, recColour, frozen ? 1.0f : 0.25f + 0.75f * recGlow);
-        g.setFont (font (FontKind::semiBold, 8.5f, 0.14f));
-        g.setColour (col::creamDim);
-        g.drawText (frozen ? "HOLD" : "REC", juce::Rectangle<float> (field.getX() + 11.0f, field.getY() + 1.0f, 26.0f, 10.0f), juce::Justification::centredLeft, false);
+        g.setColour (col::star.withAlpha (0.85f));
+        g.fillRoundedRectangle (x - 0.9f, laneL.getY() - 3.0f, 1.8f, laneR.getBottom() - laneL.getY() + 6.0f, 0.9f);
+        drawLed (g, { field.getX() + 6.0f, field.getY() + 8.0f }, 3.0f, frozen ? col::ice : col::hot, frozen ? 1.0f : 0.25f + 0.75f * recGlow);
+        g.setFont (capsFont (10.0f));
+        g.setColour (col::starDim);
+        g.drawText (frozen ? "HOLD" : "REC", juce::Rectangle<float> (field.getX() + 14.0f, field.getY() + 1.0f, 40.0f, 14.0f), juce::Justification::centredLeft, false);
     }
 
     // ---- PLAY heads
-    const auto drawPlayHead = [&] (float x, juce::Rectangle<float> lane, float glow, bool pointerOnTop)
+    const auto drawPlayHead = [&] (float x, juce::Rectangle<float> lane, float glow, bool pointerOnTop, juce::Colour colour)
     {
         if (x < tapeX0 || x > tapeX1 + 1.0f)
             return;
 
         if (glow > 0.02f)
         {
-            const float r = 10.0f + 26.0f * glow;
-            g.setGradientFill (juce::ColourGradient (tapeColour.withAlpha (0.55f * glow), x, lane.getCentreY(),
-                                                     tapeColour.withAlpha (0.0f), x + r, lane.getCentreY(), true));
+            const float r = 12.0f + 30.0f * glow;
+            g.setGradientFill (juce::ColourGradient (colour.withAlpha (0.60f * glow), x, lane.getCentreY(),
+                                                     colour.withAlpha (0.0f), x + r, lane.getCentreY(), true));
             g.fillEllipse (x - r, lane.getCentreY() - r, 2.0f * r, 2.0f * r);
         }
 
-        g.setColour (col::cream.withAlpha (0.9f));
-        g.drawLine (x, lane.getY() - 2.0f, x, lane.getBottom() + 2.0f, 1.6f);
+        g.setColour (col::star.withAlpha (0.95f));
+        g.fillRoundedRectangle (x - 0.9f, lane.getY() - 2.0f, 1.8f, lane.getHeight() + 4.0f, 0.9f);
 
         juce::Path p;
-        if (pointerOnTop)   p.addTriangle (x - 4.5f, lane.getY() - 8.0f, x + 4.5f, lane.getY() - 8.0f, x, lane.getY() - 1.5f);
-        else                p.addTriangle (x - 4.5f, lane.getBottom() + 8.0f, x + 4.5f, lane.getBottom() + 8.0f, x, lane.getBottom() + 1.5f);
+        if (pointerOnTop)   p.addTriangle (x - 5.0f, lane.getY() - 9.0f, x + 5.0f, lane.getY() - 9.0f, x, lane.getY() - 1.5f);
+        else                p.addTriangle (x - 5.0f, lane.getBottom() + 9.0f, x + 5.0f, lane.getBottom() + 9.0f, x, lane.getBottom() + 1.5f);
         g.fillPath (p);
     };
 
@@ -642,29 +686,31 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
 
     if (hasMain)
     {
-        drawPlayHead (xL, laneL, glowL, true);
-        drawPlayHead (xR, laneR, glowR, false);
+        drawPlayHead (xL, laneL, glowL, true, colourL);
+        drawPlayHead (xR, laneR, glowR, false, colourR);
     }
 
     // ---- feedback rail: carries the sound from the play head back to the record head
     {
-        const float xh = juce::jlimit (tapeX0 + 12.0f, tapeX1, hasMain ? xL : xForDelay (juce::jmax (timeL, timeR)));
-        const float railY = field.getY() + 4.0f;
-        const float yTop = laneL.getY() - 9.0f;
+        const float railStart = tapeX0 + 52.0f;
+        const float xh = juce::jlimit (railStart + 8.0f, tapeX1, hasMain ? xL : xForDelay (juce::jmax (timeL, timeR)));
+        const float railY = field.getY() + 8.0f;
+        const float yTop = laneL.getY() - 10.0f;
         const float amount = juce::jlimit (0.0f, 1.25f, fb);
-        const auto railColour = col::amber.interpolatedWith (col::cyan, juce::jlimit (0.0f, 1.0f, std::abs (pitch) / 12.0f));
+        const auto railColour = col::magenta.interpolatedWith (col::ice, juce::jlimit (0.0f, 1.0f, std::abs (pitch) / 12.0f));
 
         juce::Path rail;
         rail.startNewSubPath (xh, yTop);
         rail.lineTo (xh, railY);
-        rail.lineTo (tapeX0 + 34.0f, railY);
-        g.setColour (railColour.withAlpha (0.12f + 0.3f * juce::jmin (1.0f, amount)));
-        g.strokePath (rail, juce::PathStrokeType (1.0f + 1.6f * juce::jmin (1.0f, amount), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        rail.lineTo (railStart, railY);
+        g.setColour (railColour.withAlpha (0.16f + 0.34f * juce::jmin (1.0f, amount)));
+        g.strokePath (rail.createPathWithRoundedCorners (6.0f),
+                      juce::PathStrokeType (1.0f + 1.6f * juce::jmin (1.0f, amount), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
         // travelling pulses, brighter and closer together with more feedback
         if (amount > 0.01f)
         {
-            const float length = (xh - tapeX0 - 34.0f) + (yTop - railY);
+            const float length = (xh - railStart) + (yTop - railY);
             const float spacing = 26.0f;
             const int count = (int) (length / spacing) + 1;
 
@@ -678,35 +724,47 @@ void EchoVisualizer::paintTape (juce::Graphics& g)
                 else                        pt = { xh - (dist - (yTop - railY)), railY };
 
                 const float fade = juce::jlimit (0.0f, 1.0f, std::pow (juce::jmin (1.0f, amount), dist / juce::jmax (1.0f, length) * 2.0f + 0.2f));
-                g.setColour (railColour.withAlpha (0.25f + 0.7f * fade));
-                g.fillEllipse (pt.x - 1.8f, pt.y - 1.8f, 3.6f, 3.6f);
+                g.setColour (railColour.interpolatedWith (juce::Colours::white, 0.45f).withAlpha (0.25f + 0.7f * fade));
+                g.fillEllipse (pt.x - 2.0f, pt.y - 2.0f, 4.0f, 4.0f);
             }
         }
 
-        g.setFont (monoFont (8.5f));
-        g.setColour (railColour.withAlpha (0.8f));
         juce::String text = "FEEDBACK " + juce::String (juce::roundToInt (fb * 100.0f)) + "%";
         if (std::abs (pitch) > 0.01f)
             text << "  " << (pitch > 0.0f ? "+" : "") << juce::String (pitch, 1) << " st / pass";
-        g.drawText (text, juce::Rectangle<float> (tapeX0 + 36.0f, railY + 4.5f, 220.0f, 9.0f), juce::Justification::centredLeft, false);
+
+        const auto f = monoFont (10.5f);
+        const auto label = juce::Rectangle<float> (railStart + 6.0f, railY + 4.0f, textWidth (f, text) + 8.0f, 13.0f);
+
+        if (label.getRight() < xh - 6.0f)
+        {
+            g.setFont (f);
+            g.setColour (railColour.interpolatedWith (juce::Colours::white, 0.3f).withAlpha (0.9f));
+            g.drawText (text, label, juce::Justification::centredLeft, false);
+        }
     }
 
-    if (hoverTape || drag == Drag::tape)
+    if ((hoverTape || drag == Drag::tape) && toastLife <= 0.0f)
     {
-        g.setFont (font (FontKind::semiBold, 9.0f, 0.16f));
-        g.setColour (col::cream.withAlpha (0.6f));
-        g.drawText ("DRAG SIDEWAYS: TIME    UP / DOWN: FEEDBACK",
-                    juce::Rectangle<float> (tapeX1 - 240.0f, field.getBottom() - 30.0f, 236.0f, 10.0f), juce::Justification::centredRight, false);
+        const juce::String hint ("DRAG SIDEWAYS: TIME     UP / DOWN: FEEDBACK");
+        const auto f = capsFont (9.5f);
+        const float tw = textWidth (f, hint) + 22.0f;
+        const auto pill = juce::Rectangle<float> (tapeX1 - tw - 4.0f, laneR.getBottom() - 24.0f, tw, 19.0f);
+        g.setColour (col::space.withAlpha (0.72f));
+        g.fillRoundedRectangle (pill, 9.5f);
+        g.setFont (f);
+        g.setColour (col::star.withAlpha (0.85f));
+        g.drawText (hint, pill, juce::Justification::centred, false);
     }
 }
 
 // ============================================================================
 void EchoVisualizer::paintRadar (juce::Graphics& g)
 {
-    const float captionH = 15.0f;
     const auto box = radarBox;
-    const float R = juce::jmin (box.getWidth(), box.getHeight() - captionH - 12.0f) * 0.5f - 8.0f;
-    const juce::Point<float> c (box.getCentreX(), box.getY() + 12.0f + R + 4.0f);
+    juce::Point<float> c;
+    float R = 0.0f;
+    radarGeometry (c, R);
 
     if (R < 10.0f)
         return;
@@ -715,38 +773,28 @@ void EchoVisualizer::paintRadar (juce::Graphics& g)
     const int shape = juce::roundToInt (pOrbitShape->load());
     const bool active = amount > 0.005f;
 
-    // ---- graticule
-    g.setColour (juce::Colours::black.withAlpha (0.3f));
+    // ---- the field
+    g.setGradientFill (juce::ColourGradient (col::violet.withAlpha (0.16f), c.x, c.y, col::violet.withAlpha (0.02f), c.x + R, c.y, true));
     g.fillEllipse (c.x - R, c.y - R, 2.0f * R, 2.0f * R);
 
     for (int i = 1; i <= 3; ++i)
     {
         const float r = R * (float) i / 3.0f;
-        g.setColour (col::cyan.withAlpha (i == 3 ? 0.42f : 0.14f));
+        g.setColour (col::purple.withAlpha (i == 3 ? 0.55f : 0.16f));
         g.drawEllipse (c.x - r, c.y - r, 2.0f * r, 2.0f * r, i == 3 ? 1.2f : 0.8f);
     }
 
-    g.setColour (col::cyan.withAlpha (0.14f));
-    g.drawLine (c.x - R, c.y, c.x + R, c.y, 0.8f);
-    g.drawLine (c.x, c.y - R, c.x, c.y + R, 0.8f);
+    g.setColour (col::purple.withAlpha (0.16f));
+    g.fillRect (c.x - R, c.y - 0.4f, 2.0f * R, 0.8f);
+    g.fillRect (c.x - 0.4f, c.y - R, 0.8f, 2.0f * R);
 
     for (int i = 0; i < 24; ++i)
     {
         const float a = (float) i / 24.0f * 2.0f * kPiF;
-        const float r0 = R * ((i % 6) == 0 ? 0.93f : 0.965f);
-        g.setColour (col::cyan.withAlpha (0.4f));
+        const float r0 = R * ((i % 6) == 0 ? 0.92f : 0.96f);
+        g.setColour (col::purple.withAlpha (0.5f));
         g.drawLine (c.x + std::sin (a) * r0, c.y - std::cos (a) * r0, c.x + std::sin (a) * R, c.y - std::cos (a) * R, 0.8f);
     }
-
-    g.setFont (font (FontKind::bold, 10.0f, 0.1f));
-    g.setColour (col::creamDim);
-    g.drawText ("L", juce::Rectangle<float> (c.x - R - 13.0f, c.y - 6.0f, 10.0f, 12.0f), juce::Justification::centred, false);
-    g.drawText ("R", juce::Rectangle<float> (c.x + R + 3.0f, c.y - 6.0f, 10.0f, 12.0f), juce::Justification::centred, false);
-
-    g.setFont (font (FontKind::semiBold, 7.5f, 0.16f));
-    g.setColour (col::creamFaint);
-    g.drawText ("NEAR", juce::Rectangle<float> (c.x - 20.0f, c.y - R + 3.0f, 40.0f, 8.0f), juce::Justification::centred, false);
-    g.drawText ("FAR", juce::Rectangle<float> (c.x - 20.0f, c.y + R - 11.0f, 40.0f, 8.0f), juce::Justification::centred, false);
 
     const auto toScreen = [&] (juce::Point<float> p) { return juce::Point<float> (c.x + juce::jlimit (-1.0f, 1.0f, p.x) * R * 0.94f,
                                                                                     c.y - juce::jlimit (-1.0f, 1.0f, p.y) * R * 0.94f); };
@@ -759,8 +807,8 @@ void EchoVisualizer::paintRadar (juce::Graphics& g)
             for (int i = 0; i < 16; ++i)
             {
                 const auto p = toScreen (orbitPoint (shape, ((float) i + 0.5f) / 16.0f, amount));
-                g.setColour (col::cyan.withAlpha (0.35f));
-                g.drawEllipse (p.x - 2.0f, p.y - 2.0f, 4.0f, 4.0f, 0.9f);
+                g.setColour (col::magenta.withAlpha (0.55f));
+                g.drawEllipse (p.x - 2.2f, p.y - 2.2f, 4.4f, 4.4f, 1.0f);
             }
         }
         else
@@ -774,10 +822,10 @@ void EchoVisualizer::paintRadar (juce::Graphics& g)
                 if (i == 0) path.startNewSubPath (p); else path.lineTo (p);
             }
 
-            g.setColour (col::cyan.withAlpha (0.16f));
-            g.strokePath (path, juce::PathStrokeType (3.5f));
-            g.setColour (col::cyan.withAlpha (0.55f));
-            g.strokePath (path, juce::PathStrokeType (1.0f));
+            g.setGradientFill (accentGradient ({ c.x - R, c.y }, { c.x + R, c.y }, 0.20f));
+            g.strokePath (path, juce::PathStrokeType (4.0f));
+            g.setGradientFill (accentGradient ({ c.x - R, c.y }, { c.x + R, c.y }, 0.85f));
+            g.strokePath (path, juce::PathStrokeType (1.2f));
         }
     }
 
@@ -787,11 +835,11 @@ void EchoVisualizer::paintRadar (juce::Graphics& g)
         if (b.life <= 0.0f) continue;
 
         const auto p = toScreen ({ b.x, b.y });
-        const float r = 2.5f + (1.0f - b.life) * 15.0f * b.size;
-        g.setColour (col::amber.withAlpha (0.75f * b.life * b.life));
-        g.drawEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r, 1.2f);
-        g.setColour (col::amber.withAlpha (0.5f * b.life));
-        g.fillEllipse (p.x - 1.6f, p.y - 1.6f, 3.2f, 3.2f);
+        const float r = 2.5f + (1.0f - b.life) * 16.0f * b.size;
+        g.setColour (col::pink.withAlpha (0.8f * b.life * b.life));
+        g.drawEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r, 1.3f);
+        g.setColour (col::pink.withAlpha (0.5f * b.life));
+        g.fillEllipse (p.x - 1.7f, p.y - 1.7f, 3.4f, 3.4f);
     }
 
     // ---- trail and current position
@@ -800,24 +848,54 @@ void EchoVisualizer::paintRadar (juce::Graphics& g)
         const int idx = (trailPos + i) % (int) trail.size();
         const float age = (float) i / (float) trail.size();           // 0 = oldest
         const auto p = toScreen (trail[(size_t) idx]);
-        const float r = 0.6f + 2.2f * age;
-        g.setColour (col::cream.withAlpha (0.04f + 0.5f * age * age));
+        const float r = 0.6f + 2.3f * age;
+        g.setColour (col::star.withAlpha (0.04f + 0.5f * age * age));
         g.fillEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r);
     }
 
     {
         const auto p = toScreen (trail[(size_t) ((trailPos + (int) trail.size() - 1) % (int) trail.size())]);
         const float pulse = 0.5f + 0.5f * juce::jmin (1.0f, wetSmooth * 3.0f);
-        g.setGradientFill (juce::ColourGradient (col::amber.withAlpha (0.6f * pulse), p.x, p.y, col::amber.withAlpha (0.0f), p.x + 16.0f, p.y, true));
-        g.fillEllipse (p.x - 16.0f, p.y - 16.0f, 32.0f, 32.0f);
-        g.setColour (col::cream);
-        g.fillEllipse (p.x - 3.2f, p.y - 3.2f, 6.4f, 6.4f);
+        g.setGradientFill (juce::ColourGradient (col::pink.withAlpha (0.7f * pulse), p.x, p.y, col::pink.withAlpha (0.0f), p.x + 18.0f, p.y, true));
+        g.fillEllipse (p.x - 18.0f, p.y - 18.0f, 36.0f, 36.0f);
+        g.setColour (col::star);
+        g.fillEllipse (p.x - 3.4f, p.y - 3.4f, 6.8f, 6.8f);
+    }
+
+    // ---- compass: on top of the path, each word on a patch of dark so a wide orbit
+    //      passing underneath does not swallow it
+    {
+        const auto word = [&] (const char* text, juce::Rectangle<float> r, const juce::Font& f, juce::Colour colour)
+        {
+            g.setColour (col::space.withAlpha (0.62f));
+            g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+            g.setFont (f);
+            g.setColour (colour);
+            g.drawText (text, r, juce::Justification::centred, false);
+        };
+
+        const auto letters = font (FontKind::bold, 11.5f, 0.0f);
+        word ("L", juce::Rectangle<float> (c.x - R + 4.0f, c.y - 18.0f, 15.0f, 15.0f), letters, col::starDim);
+        word ("R", juce::Rectangle<float> (c.x + R - 19.0f, c.y - 18.0f, 15.0f, 15.0f), letters, col::starDim);
+
+        const auto caps = capsFont (9.5f);
+        word ("NEAR", juce::Rectangle<float> (c.x - 21.0f, c.y - R + 4.0f, 42.0f, 13.0f), caps, col::starFaint);
+        word ("FAR", juce::Rectangle<float> (c.x - 17.0f, c.y + R - 17.0f, 34.0f, 13.0f), caps, col::starFaint);
     }
 
     // ---- legend
-    g.setFont (font (FontKind::semiBold, 9.5f, 0.18f));
-    g.setColour (active ? col::cyan : col::creamFaint);
-    g.drawText ("ECHO ORBIT", juce::Rectangle<float> (box.getX(), box.getY(), box.getWidth(), 10.0f), juce::Justification::centredLeft, false);
+    const auto titleArea = juce::Rectangle<float> (box.getX(), box.getY(), box.getWidth(), 13.0f);
+
+    if (active)
+    {
+        drawAccentText (g, "ECHO ORBIT", titleArea, juce::Justification::centredLeft, capsFont (11.0f));
+    }
+    else
+    {
+        g.setFont (capsFont (11.0f));
+        g.setColour (col::starFaint);
+        g.drawText ("ECHO ORBIT", titleArea, juce::Justification::centredLeft, false);
+    }
 
     juce::String caption = orbitShapeNames()[juce::jlimit (0, 4, shape)];
     if (pOrbitSync->load() > 0.5f)
@@ -825,10 +903,43 @@ void EchoVisualizer::paintRadar (juce::Graphics& g)
     else
         caption << "  " << juce::String (pOrbitRate->load(), 2) << " Hz";
 
-    g.setFont (monoFont (9.0f));
-    g.setColour (active ? col::cyan.withAlpha (0.9f) : col::creamFaint);
+    g.setFont (monoFont (11.0f));
+    g.setColour (active ? col::star.withAlpha (0.9f) : col::starDim);
     g.drawText (active ? caption : juce::String ("OFF  -  DRAG TO ENGAGE"),
-                juce::Rectangle<float> (box.getX(), box.getBottom() - captionH + 2.0f, box.getWidth(), 11.0f), juce::Justification::centred, false);
+                juce::Rectangle<float> (box.getX(), box.getBottom() - 15.0f, box.getWidth(), 14.0f), juce::Justification::centred, false);
+}
+
+// ============================================================================
+/** The algorithm that was just chosen says what it does, then gets out of the way. */
+void EchoVisualizer::paintToast (juce::Graphics& g)
+{
+    if (toastLife <= 0.0f || toastMode < 0)
+        return;
+
+    const auto& info = modeInfo (toastMode);
+    const float alpha = juce::jlimit (0.0f, 1.0f, juce::jmin (toastLife / 0.5f, (kToastSeconds - toastLife) / 0.18f));
+
+    const auto nameFont = font (FontKind::bold, 12.5f, 0.03f);
+    const auto textFont = font (FontKind::medium, 12.5f, 0.0f);
+    const juce::String name (info.name), text (info.description);
+
+    // a bar across the foot of the screen: for these few seconds it takes the place of the
+    // time ruler and the orbit caption instead of sitting on top of them
+    const auto bar = juce::Rectangle<float> (screen.getX() + 12.0f, screen.getBottom() - 37.0f, screen.getWidth() - 24.0f, 26.0f);
+
+    g.setColour (juce::Colour (0xff120e1b).withAlpha (alpha));
+    g.fillRoundedRectangle (bar, 13.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.14f * alpha));
+    g.drawRoundedRectangle (bar.reduced (0.5f), 12.5f, 1.0f);
+
+    auto r = bar.reduced (15.0f, 0.0f);
+    const float nameW = textWidth (nameFont, name) + 12.0f;
+    g.setFont (nameFont);
+    g.setGradientFill (accentGradient (r.withWidth (nameW), alpha));
+    g.drawText (name, r.removeFromLeft (nameW), juce::Justification::centredLeft, false);
+    g.setFont (textFont);
+    g.setColour (col::star.withAlpha (0.9f * alpha));
+    g.drawText (text, r, juce::Justification::centredLeft, true);
 }
 
 // ============================================================================
@@ -896,9 +1007,9 @@ void EchoVisualizer::mouseDrag (const juce::MouseEvent& e)
 {
     if (drag == Drag::orbit)
     {
-        const float captionH = 15.0f;
-        const float R = juce::jmin (radarBox.getWidth(), radarBox.getHeight() - captionH - 12.0f) * 0.5f - 8.0f;
-        const juce::Point<float> c (radarBox.getCentreX(), radarBox.getY() + 12.0f + R + 4.0f);
+        juce::Point<float> c;
+        float R = 0.0f;
+        radarGeometry (c, R);
         setParam (id::orbit, juce::jlimit (0.0f, 100.0f, 100.0f * e.position.getDistanceFrom (c) / juce::jmax (1.0f, R * 0.94f)));
     }
     else if (drag == Drag::tape)

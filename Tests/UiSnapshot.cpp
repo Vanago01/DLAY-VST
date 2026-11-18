@@ -1,16 +1,22 @@
 // Renders the real DLAY editor to PNG files while audio is running through the plugin.
 //
-//   DLAY_UiSnapshot <output-dir> [--preset "Name"] [--scale 1.0] [--seconds 3.5] [--lanes] [--interact]
+//   DLAY_UiSnapshot <output-dir> [--preset "Name"] [--set id=value ...] [--scale 1.0] [--seconds 3.5]
+//                   [--lanes] [--interact]
 //
-// Writes advanced.png, simple.png and browser.png, plus one image per MOTION lane with --lanes.
-// With --interact it then drives the interface with simulated mouse gestures (dragging the
-// tape and the orbit radar, drawing MOTION curves, typing a value, browsing presets, undo,
+// --set changes a parameter after the preset has loaded (its plain value: --set freeze=1,
+// --set feedback=80), to look at a state no preset happens to be in.
+//
+// Writes advanced.png (the TIME page), space.png, motion.png, simple.png and browser.png, plus
+// one image per MOTION lane with --lanes. With --interact it then drives the interface with
+// simulated mouse gestures (dragging the tape and the orbit radar, the algorithm screen, the
+// pages of the lower card, drawing MOTION curves, typing a value, browsing presets, undo,
 // resizing, every algorithm) and checks that each one does what it should. The exit code is
 // the number of failed checks.
 
 #include "TestSupport.h"
 #include "PluginEditor.h"
 #include "UI/PresetBrowser.h"
+#include "UI/Theme.h"
 
 using namespace dlaytest;
 
@@ -18,7 +24,8 @@ namespace
 {
     struct Runner : private juce::Timer
     {
-        Runner (const juce::File& dir, const juce::String& presetName, float scale, double seconds, bool allLanes, bool interact)
+        Runner (const juce::File& dir, const juce::String& presetName, const juce::StringArray& settings,
+                float scale, double seconds, bool allLanes, bool interact)
             : outDir (dir), snapshotScale (scale), warmupFrames ((int) (seconds * 30.0)), lanes (allLanes), interactive (interact)
         {
             outDir.createDirectory();
@@ -33,6 +40,16 @@ namespace
                 for (int i = 0; i < (int) entries.size(); ++i)
                     if (entries[(size_t) i].name.equalsIgnoreCase (presetName))
                         proc.presets->load (i);
+            }
+
+            for (const auto& setting : settings)
+            {
+                const auto paramId = setting.upToFirstOccurrenceOf ("=", false, false).trim();
+
+                if (proc.apvts.getParameter (paramId) != nullptr)
+                    setParam (proc, paramId.toRawUTF8(), setting.fromFirstOccurrenceOf ("=", false, false).getFloatValue());
+                else
+                    std::printf ("no parameter called \"%s\"\n", paramId.toRawUTF8());
             }
 
             input = makeTestSignal (sampleRate, 60.0, 60.0, 3);
@@ -76,7 +93,11 @@ namespace
 
         void save (const juce::String& name)
         {
-            const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, snapshotScale);
+            write (editor->createComponentSnapshot (editor->getLocalBounds(), true, snapshotScale), name);
+        }
+
+        void write (const juce::Image& image, const juce::String& name)
+        {
             const auto file = outDir.getChildFile (name + ".png");
             file.deleteFile();
             juce::FileOutputStream stream (file);
@@ -111,7 +132,19 @@ namespace
 
             if (auto* v = findById (*editor, "visualizer"))  std::printf ("paint cost: visualizer   %.2f ms\n", time (*v, 30));
             if (auto* m = findById (*editor, "motion"))      std::printf ("paint cost: motion panel %.2f ms\n", time (*m, 30));
-            std::printf ("paint cost: whole editor %.2f ms\n", time (*editor, 10));
+            const double whole = time (*editor, 10);
+            std::printf ("paint cost: whole editor %.2f ms\n", whole);
+
+            // turning a page of the lower card redraws the cached faceplate once
+            const auto start = juce::Time::getHighResolutionTicks();
+            constexpr int turns = 6;
+            for (int i = 0; i < turns; ++i)
+            {
+                editor->showPage (i % (int) DlayAudioProcessorEditor::numPages);
+                editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
+            }
+            const double turn = 1000.0 * juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - start) / turns;
+            std::printf ("paint cost: page turn    %.2f ms more than a plain repaint\n", turn - whole);
         }
 
         // ---------------------------------------------------------------------------------
@@ -231,6 +264,117 @@ namespace
                 const int shape = juce::roundToInt (value (id::orbitShape));
                 vis->mouseDoubleClick (mouse (*vis, inside, inside, false, 2));
                 expect (juce::roundToInt (value (id::orbitShape)) == (shape + 1) % 5, "double-clicking the radar steps to the next orbit shape");
+            });
+
+            // ---- the algorithm screen: families, arrows, dots, the full list --------------------------
+            steps.push_back ([this] { setParam (proc, id::mode, (float) Mode::digital); });
+            wait (2);
+            steps.push_back ([this]
+            {
+                auto* screen = findById (*editor, "modeScreen");
+                expect (screen != nullptr, "algorithm screen found");
+                if (screen == nullptr) return;
+
+                const auto click = [screen] (float x, float y)
+                {
+                    const juce::Point<float> at (x, y);
+                    screen->mouseDown (mouse (*screen, at, at));
+                };
+                const auto mode = [this] { return juce::roundToInt (value (id::mode)); };
+
+                click (165.0f, 17.0f);
+                expect (mode() == (int) Mode::reverse, "clicking CREATIVE goes to the first creative algorithm");
+                click (268.0f, 17.0f);
+                expect (mode() == (int) Mode::granular, "the right arrow steps to the next algorithm");
+                click (238.0f, 17.0f);
+                click (238.0f, 17.0f);
+                expect (mode() == (int) Mode::loFi, "the left arrow steps back, across families");
+                click (75.0f, 67.0f);
+                expect (mode() == (int) Mode::tape, "clicking a dot picks that algorithm of the family");
+            });
+            wait (3);
+
+            // ---- the pages of the lower card ---------------------------------------------------------
+            steps.push_back ([this]
+            {
+                auto* pages = findById (*editor, "pages");
+                expect (pages != nullptr && pages->isVisible(), "page tabs found");
+                if (pages == nullptr) return;
+
+                const auto click = [pages] (float x)
+                {
+                    const juce::Point<float> at (x, 16.0f);
+                    pages->mouseDown (mouse (*pages, at, at));
+                };
+                const auto showing = [this] (const juce::String& componentId)
+                {
+                    auto* c = findById (*editor, componentId);
+                    return c != nullptr && c->isVisible();
+                };
+
+                click (150.0f);
+                expect (showing (id::orbit) && ! showing (id::warp) && ! showing ("motion"), "the SPACE tab shows the orbit and stereo controls");
+                click (250.0f);
+                expect (showing ("motion") && ! showing (id::orbit), "the MOTION tab shows the lanes");
+                click (50.0f);
+                expect (showing (id::warp) && showing (id::pitch) && ! showing ("motion"), "the TIME tab shows warp, collapse and pitch");
+
+                editor->setAdvancedView (false);
+                expect (! showing (id::warp) && ! pages->isVisible() && showing (id::feedback), "the compact view leaves the lower card out");
+                editor->setAdvancedView (true);
+            });
+            wait (3);
+
+            // ---- tooltip (drawn by the look and feel; shown here for the eye) -------------------------
+            steps.push_back ([this]
+            {
+                auto& lf = editor->getLookAndFeel();
+                const juce::String text ("How much of each echo is fed back. Above 100 % the loop builds on itself - "
+                                         "the internal protection catches it, not your speakers.");
+                const auto bounds = lf.getTooltipBounds (text, { 100, 100 }, { 0, 0, 2000, 1200 });
+                juce::Image image (juce::Image::ARGB, bounds.getWidth() + 24, bounds.getHeight() + 24, true);
+                {
+                    juce::Graphics g (image);
+                    g.fillAll (dlay::ui::col::page);
+                    g.setOrigin (12, 12);
+                    lf.drawTooltip (g, text, bounds.getWidth(), bounds.getHeight());
+                }
+                write (image, "interact-tooltip");
+                expect (bounds.getWidth() > 100 && bounds.getHeight() > 20, "tooltips are laid out");
+
+                // A popup menu needs a window on a desktop, which this tool does not have: draw
+                // a few rows through the look and feel instead.
+                struct Row { const char* text; bool separator, ticked, submenu, header; };
+                static constexpr Row rows[] = { { "VINTAGE", false, false, false, true }, { "TAPE", false, true, false, false },
+                                                { "BBD", false, false, false, false }, { "TAPE ECHO", false, false, false, false },
+                                                { "", true, false, false, false }, { "Window size", false, false, true, false },
+                                                { "Keep MIX when changing presets", false, false, false, false } };
+                int width = 0, height = 0;
+                for (const auto& row : rows)
+                {
+                    int w = 0, h = 0;
+                    lf.getIdealPopupMenuItemSize (row.text, row.separator, 22, w, h);
+                    width = juce::jmax (width, w);
+                    height += h;
+                }
+
+                juce::Image menu (juce::Image::ARGB, width, height + 8, true);
+                {
+                    juce::Graphics g (menu);
+                    lf.drawPopupMenuBackground (g, width, height + 8);
+                    int y = 4;
+                    for (const auto& row : rows)
+                    {
+                        int w = 0, h = 0;
+                        lf.getIdealPopupMenuItemSize (row.text, row.separator, 22, w, h);
+                        const juce::Rectangle<int> area (0, y, width, h);
+                        if (row.header)     lf.drawPopupMenuSectionHeader (g, area, row.text);
+                        else                lf.drawPopupMenuItem (g, area, row.separator, true, juce::String (row.text) == "BBD", row.ticked, row.submenu,
+                                                                  row.text, {}, nullptr, nullptr);
+                        y += h;
+                    }
+                }
+                write (menu, "interact-menu");
             });
 
             // ---- MOTION: click-edit, freehand, reset, undo --------------------------------------------
@@ -402,7 +546,26 @@ namespace
                     search->setText ({}, true);
             });
             wait (25);
-            steps.push_back ([this] { save ("interact-ghost-machine-browser"); editor->showPresetBrowser (false); });
+            steps.push_back ([this] { save ("interact-ghost-machine-browser"); editor->setAdvancedView (false); });
+            wait (3);
+            steps.push_back ([this]
+            {
+                // the library in the compact view, where it has the least room
+                save ("interact-browser-compact");
+
+                auto* browser = findById (*editor, "browser");
+                auto* name = browser != nullptr ? findChild<juce::TextEditor> (*browser, [] (juce::TextEditor& t) { return t.getTextToShowWhenEmpty().containsIgnoreCase ("preset name"); })
+                                                : nullptr;
+                auto* saveKey = browser != nullptr ? findChild<juce::Button> (*browser, [] (juce::Button& b) { return b.getButtonText() == "SAVE PRESET"; })
+                                                   : nullptr;
+                expect (name != nullptr && saveKey != nullptr && name->isVisible() && saveKey->isVisible()
+                          && browser->getLocalBounds().contains (name->getBounds()) && browser->getLocalBounds().contains (saveKey->getBounds())
+                          && name->getBottom() <= saveKey->getY() && name->getY() > 150,
+                        "the compact view still has room for the name field and the SAVE key");
+
+                editor->showPresetBrowser (false);
+                editor->setAdvancedView (true);
+            });
             wait (40);
             steps.push_back ([this] { save ("interact-ghost-machine"); });
 
@@ -414,14 +577,14 @@ namespace
                 editor->setAdvancedView (false);
                 expect (editor->getHeight() == juce::roundToInt (DlayAudioProcessorEditor::kSimpleHeight * scale), "compact view");
                 editor->setWindowScale (0.75);
-                expect (editor->getWidth() == 930, "75 % window");
+                expect (editor->getWidth() == 960, "75 % window");
             });
             wait (3);
             steps.push_back ([this]
             {
                 editor->setWindowScale (1.5);
                 editor->setAdvancedView (true);
-                expect (editor->getWidth() == 1860 && editor->getHeight() == 1332, "150 % advanced window");
+                expect (editor->getWidth() == 1920 && editor->getHeight() == 1080, "150 % advanced window");
             });
             wait (3);
             steps.push_back ([this] { editor->setWindowScale (1.0); });
@@ -468,15 +631,19 @@ namespace
             // a small script: warm up, then take the shots a few frames apart
             const int f = frame - warmupFrames;
 
-            if (f == 0)         { editor->setAdvancedView (true); }
+            using Page = DlayAudioProcessorEditor::Page;
+
+            if (f == 0)         { editor->setAdvancedView (true); editor->showPage (Page::pageTime); }
             else if (f == 4)    { save ("advanced"); }
             else if (f == 5)    { editor->setAdvancedView (false); }
             else if (f == 9)    { save ("simple"); }
             else if (f == 10)   { editor->setAdvancedView (true); editor->showPresetBrowser (true); }
-            else if (f == 14)   { save ("browser"); editor->showPresetBrowser (false); }
-            else if (f > 14)
+            else if (f == 14)   { save ("browser"); editor->showPresetBrowser (false); editor->showPage (Page::pageSpace); }
+            else if (f == 18)   { save ("space"); editor->showPage (Page::pageMotion); }
+            else if (f == 34)   { save ("motion"); editor->showPage (Page::pageTime); }
+            else if (f > 34)
             {
-                const int laneStep = f - 15;
+                const int laneStep = f - 35;
 
                 if (! lanes || laneStep >= dlay::kNumLanes * 12)
                 {
@@ -532,7 +699,7 @@ int main (int argc, char** argv)
 
     if (args.isEmpty())
     {
-        std::printf ("usage: DLAY_UiSnapshot <output-dir> [--preset \"Name\"] [--scale 1.0] [--seconds 3.5] [--lanes] [--interact]\n");
+        std::printf ("usage: DLAY_UiSnapshot <output-dir> [--preset \"Name\"] [--set id=value ...] [--scale 1.0] [--seconds 3.5] [--lanes] [--interact]\n");
         return 1;
     }
 
@@ -544,9 +711,14 @@ int main (int argc, char** argv)
         return i >= 0 && i + 1 < args.size() ? args[i + 1] : fallback;
     };
 
+    juce::StringArray settings;
+    for (int i = 1; i + 1 < args.size(); ++i)
+        if (args[i] == "--set")
+            settings.add (args[i + 1]);
+
     {
         Runner runner (juce::File::getCurrentWorkingDirectory().getChildFile (args[0]),
-                       value ("--preset", {}), value ("--scale", "1.0").getFloatValue(),
+                       value ("--preset", {}), settings, value ("--scale", "1.0").getFloatValue(),
                        value ("--seconds", "3.5").getDoubleValue(), args.contains ("--lanes"), args.contains ("--interact"));
 
         juce::MessageManager::getInstance()->runDispatchLoop();

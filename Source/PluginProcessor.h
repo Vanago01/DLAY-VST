@@ -60,8 +60,12 @@ public:
     /** Editor settings that travel with the session. */
     bool   getUiAdvanced() const        { return (bool) apvts.state.getProperty ("uiAdvanced", true); }
     void   setUiAdvanced (bool b)       { apvts.state.setProperty ("uiAdvanced", b, nullptr); }
-    double getUiScale() const           { return (double) apvts.state.getProperty ("uiScale", 1.0); }
-    void   setUiScale (double s)        { apvts.state.setProperty ("uiScale", s, nullptr); }
+    // (Stored as "uiZoom": the "uiScale" of sessions saved with the first interface belonged
+    // to a larger layout and would open this one too small. 0 = never chosen.)
+    double getUiScale() const           { return (double) apvts.state.getProperty ("uiZoom", 0.0); }
+    void   setUiScale (double s)        { apvts.state.setProperty ("uiZoom", s, nullptr); }
+    int    getUiPage() const            { return (int) apvts.state.getProperty ("uiPage", 0); }
+    void   setUiPage (int p)            { apvts.state.setProperty ("uiPage", p, nullptr); }
     int    getUiLane() const            { return (int) apvts.state.getProperty ("uiLane", 0); }
     void   setUiLane (int l)            { apvts.state.setProperty ("uiLane", l, nullptr); }
 

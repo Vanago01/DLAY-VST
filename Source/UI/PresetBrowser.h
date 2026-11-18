@@ -49,17 +49,18 @@ private:
     PresetManager& presets;
 
     std::unique_ptr<CategoryList> categories;
+    juce::Viewport categoryView;                // the category list scrolls when the window is short
     juce::TextEditor search, nameEdit, descriptionEdit;
     juce::ListBox list { "presets", this };
-    KeyButton saveButton { "SAVE PRESET", col::amber }, deleteButton { "DELETE" }, importButton { "IMPORT" },
-              folderButton { "FOLDER" }, initButton { "INIT" }, closeButton { "CLOSE" }, categoryButton { "User" };
+    KeyButton saveButton { "SAVE PRESET" }, deleteButton { "DELETE" }, importButton { "IMPORT" },
+              folderButton { "FOLDER" }, initButton { "INIT" }, closeButton { "CLOSE" }, categoryButton { "In: User" };
 
     std::vector<int> filtered;
     juce::String category, saveCategory, status;       // category: "" = all, "*" = favourites
     bool statusIsError = false, updating = false;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::Rectangle<int> leftArea, listArea, infoArea;
+    juce::Rectangle<int> leftArea, listArea, infoArea, statusArea;
 };
 
 } // namespace dlay::ui

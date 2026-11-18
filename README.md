@@ -9,6 +9,10 @@ instrument.
 
 ![DLAY](docs/dlay-advanced.png)
 
+| SPACE page | MOTION page |
+|---|---|
+| ![SPACE page](docs/dlay-space.png) | ![MOTION page](docs/dlay-motion.png) |
+
 | Compact view | Preset library |
 |---|---|
 | ![Compact view](docs/dlay-compact.png) | ![Preset library](docs/dlay-presets.png) |
@@ -73,7 +77,7 @@ runs without a DAW.
 | **Feedback path** | Filters with resonance, five saturation types (2x / 4x oversampled), diffusion, modulation, pitch shifting, reverse, ducking, and protection that keeps the loop bounded whatever you do. |
 | **Echo visualizer** | The engine's real tape: sound enters at the REC head, travels to the PLAY heads and returns along the feedback rail. Every tap, bounce, ghost, grain and slice is drawn where the engine is reading. Drag it to change time and feedback. |
 | **Presets** | 239 factory presets in 15 categories, search, favourites, previous/next, user presets as plain files. |
-| **Interface** | Resizable (60 % - 200 %), compact and advanced views, tooltips on everything, undo/redo. |
+| **Interface** | A white instrument with windows onto deep space: light cards and dials, dark screens for everything that shows sound, one accent running from pink to purple. 1280 x 720 at full size, large type throughout, resizable (70 % - 200 %), compact and full views, tooltips on everything, undo/redo. |
 
 ## Building
 
@@ -107,7 +111,7 @@ A GitHub Actions workflow (`.github/workflows/build.yml`) builds and tests all t
 platforms on every push, loads the built plug-in in a small host on each, and makes one
 archive per system (plug-ins, standalone and `INSTALL.txt`). Every successful build of the
 main branch is published on the repository's Releases page as "DLAY - latest build". For a
-numbered release, push a tag such as `v1.0.0`, or start the workflow by hand and type the
+numbered release, push a tag such as `v1.1.0`, or start the workflow by hand and type the
 version number.
 
 ## Tests and tools
@@ -124,32 +128,49 @@ ctest --test-dir build --output-on-failure
 
 ## Using DLAY
 
-**The top bar** has the preset display (click it for the library), previous / next,
-favourite, save, undo / redo, the ADVANCED view switch and the settings MENU (saturation
-quality, "keep MIX when changing presets", window size, preset folder).
+**The top bar** has the power key (bypass), the preset display (click it for the library),
+previous / next, the heart (favourite), SAVE, undo / redo, the ADVANCED view switch and the
+settings MENU (saturation quality, "keep MIX when changing presets", window size, preset
+folder). The window opens at a size that suits the screen and can be dragged larger or
+smaller by its corner.
 
-**Delay engine (left).** Pick a family and an algorithm. TIME is a note value when SYNC is
-on and milliseconds when it is off. Each algorithm has two controls of its own (the two
-orange knobs; their names change with the algorithm). PING-PONG throws the input to one
-side and crosses the feedback; the switch below chooses STEREO, MONO or MID/SIDE operation.
+**Engine (left).** The screen at the top shows the algorithm: click a family name, an arrow
+or one of the dots to step, or the name for the full list. Below it are TIME, FEEDBACK and
+MIX (the dark dial). TIME is a note value when SYNC is on and milliseconds when it is off;
+the small screen next to SYNC shows both. The first two dials of the bottom row belong to
+the algorithm, and their names change with it; PING-PONG throws the input to one side and
+crosses the feedback, WIDTH sets how wide the echoes are.
+
+**The display (centre)** is the engine's tape and the orbit radar: left channel in pink,
+right in purple. Drag the tape sideways for time and up or down for feedback; drag inside
+the radar to set the orbit. Under it are the two hold keys, FREEZE and INFINITE, the output
+meters, OUTPUT and the LIMIT key, whose light glows while the limiter is working.
 
 **Character (right).** SATURATION and DRIVE with five characters, the feedback filters with
-a live response display, DIFFUSION, MODULATION, PITCH, REVERSE and DUCKING.
+a live response display, DIFFUSION, MOD DEPTH, MOD RATE and DUCKING.
 
-**Signature (below).**
+**The lower card (ADVANCED)** has three pages:
+
+- **TIME** - Time Warp, Time Collapse, Random Universe, Tape Memory, Pitch and Reverse.
+- **SPACE** - Echo Orbit with its shape, rate (or tempo length) and sync, Ghost Mode,
+  Offset, Spread, the stereo mode (stereo, mono or mid/side) and the saturation quality.
+- **MOTION** - the six modulation lanes.
+
+The signature features:
 
 | Control | What it does |
 |---|---|
 | TIME WARP | Bends time from 4x slower to 4x faster with tape-style pitch glides (INERTIA sets how heavy the flywheel is) |
 | ECHO ORBIT | Sends the echoes along a path through the stereo field: circle, figure 8, pendulum, spiral or scatter. The far side of the orbit is quieter and darker |
-| GHOST | Faint, band-passed, slowly detuning apparitions of earlier repeats, with their attacks removed, drifting across the stereo field |
-| COLLAPSE | Adds echoes that get closer and closer together (right, a bouncing ball) or further apart (left) |
-| RANDOM | On every cycle nudges time, position, filter and feedback by a controlled random amount |
+| GHOST MODE | Faint, band-passed, slowly detuning apparitions of earlier repeats, with their attacks removed, drifting across the stereo field |
+| TIME COLLAPSE | Adds echoes that get closer and closer together (right, a bouncing ball) or further apart (left) |
+| RANDOM UNIVERSE | On every cycle nudges time, position, filter and feedback by a controlled random amount |
 | TAPE MEMORY | Wears out the tape: wow, flutter, drifting speed, dull highs, dropouts and saturation, on any algorithm |
 | FREEZE | Holds the tape loss-free for as long as you like; all the readers keep working, so you can still warp, orbit and collapse it |
 | INFINITE | The loop sustains for ever at a controlled level while still taking in new sound |
 
-**MOTION (advanced view).** Choose a lane on the left, a shape on the right. Click in the
+**MOTION.** Choose a lane with the keys above the curve (the light in each key shows how
+hard that lane is working), a shape on the right. Click in the
 curve to add a point, drag to move it, double-click to remove it, Alt-drag a segment to bend
 it, hold Shift to snap. Switch DRAW on to paint freehand. Editing an LFO lane turns it into
 a custom curve that starts out as that LFO. The filled area is what reaches the engine
@@ -167,12 +188,12 @@ after DEPTH; the bright trace is what the lane really did on its last pass.
 Synced lanes follow the song position while the transport runs, so the same bar always
 gets the same motion.
 
-**Everywhere:** Shift-drag for fine control, double-click a knob to reset it, double-click
+**Everywhere:** Shift-drag for fine control, double-click a dial to reset it, double-click
 its name to type a value (`350`, `1.2 s`, `2.5k`, `x2`...).
 
 ## Algorithms
 
-The two orange knobs are specific to each algorithm:
+The first two dials in the bottom row of the ENGINE card are specific to each algorithm:
 
 | Algorithm | A | B | Character |
 |---|---|---|---|
@@ -322,11 +343,12 @@ Run on the build machine (Linux x86_64, Ubuntu 24.04, JUCE 9.0.5):
 | Build, GCC 13 and Clang 18 | VST3 + Standalone, no warnings from the project sources |
 | Clean checkout build | `cmake -S . -B build` (fetching JUCE), build, `ctest`: passes |
 | `DLAY_Tests` (release) | 2184 checks, 0 failures |
-| `DLAY_Tests --quick` and the UI script in a Debug build | 871 checks, 0 failures, no JUCE assertions |
-| `DLAY_Tests --quick` under AddressSanitizer + UBSan (`-DDLAY_SANITIZE=address`) | no reports |
+| `DLAY_Tests --quick` and the UI script in a Debug build | 872 and 48 checks, 0 failures, no JUCE assertions |
+| `DLAY_Tests --quick` and the UI script under AddressSanitizer + UBSan (`-DDLAY_SANITIZE=address`) | no reports |
 | `DLAY_Tests --quick` under ThreadSanitizer (`-DDLAY_SANITIZE=thread`) | no reports, including a host thread restoring sessions while audio runs and the message thread reads what the editor shows |
 | `DLAY_HostCheck` | 40 checks, 0 failures: the VST3 scans, processes at 44.1 - 192 kHz, round-trips its state through the VST3 stream, and stays healthy with the editor open while audio runs on another thread and parameters move |
-| `DLAY_UiSnapshot --interact` | 36 checks, 0 failures: tape and radar gestures, curve editing and freehand drawing, typed values, preset browsing and search, undo / redo, resizing, all 21 algorithms |
+| `DLAY_UiSnapshot --interact` | 48 checks, 0 failures: tape and radar gestures, the algorithm screen (families, arrows, dots), the pages of the lower card, curve editing and freehand drawing, typed values, preset browsing and search (also in the compact view), undo / redo, resizing, all 21 algorithms |
+| Interface at laptop size | on a 1366 x 768 screen the window opens whole, at 99 % (1270 x 714); names of the controls are set at 13 - 15 px. A full repaint takes 12 - 20 ms, the animated display 2 - 3 ms a frame, turning a page of the lower card about 25 ms |
 | CPU | 1.7 - 3.2 % of one core per instance with every feature switched on (48 kHz, 512 samples, 2x oversampling, 2.1 GHz Xeon) |
 
 Run by the GitHub workflow on GitHub's machines, on every push:
@@ -386,5 +408,5 @@ What has **not** been done, and should be before a release:
   JUCE's `LICENSE.md` and <https://juce.com/get-juce>.
 - **VST** is a trademark of Steinberg Media Technologies GmbH. Distributing VST3 plug-ins
   requires accepting Steinberg's VST3 licence terms.
-- **Fonts**: Barlow Condensed and Share Tech Mono, SIL Open Font License 1.1 (texts in
-  `Assets/Fonts/`).
+- **Fonts**: Geist and Geist Mono (The Geist Project Authors), SIL Open Font License 1.1
+  (text in `Assets/Fonts/OFL-Geist.txt`).

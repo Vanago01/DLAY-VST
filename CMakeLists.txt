@@ -10,7 +10,7 @@ if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary")
 endif()
 
-project(DLAY VERSION 1.0.0 LANGUAGES C CXX)
+project(DLAY VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -97,10 +97,11 @@ juce_add_binary_data(DLAY_Assets
     HEADER_NAME DlayAssets.h
     NAMESPACE   DlayAssets
     SOURCES
-        Assets/Fonts/BarlowCondensed-Medium.ttf
-        Assets/Fonts/BarlowCondensed-SemiBold.ttf
-        Assets/Fonts/BarlowCondensed-Bold.ttf
-        Assets/Fonts/ShareTechMono-Regular.ttf)
+        Assets/Fonts/Geist-Medium.ttf
+        Assets/Fonts/Geist-SemiBold.ttf
+        Assets/Fonts/Geist-Bold.ttf
+        Assets/Fonts/Geist-ExtraBold.ttf
+        Assets/Fonts/GeistMono-Medium.ttf)
 
 file(GLOB_RECURSE DLAY_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/*.cpp"

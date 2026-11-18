@@ -9,6 +9,8 @@ using namespace dlay::ui;
 
 namespace
 {
+    constexpr float kPiF = juce::MathConstants<float>::pi;
+
     // ------------------------------------------------------------------------
     //  tooltips
     // ------------------------------------------------------------------------
@@ -52,8 +54,8 @@ namespace
             { id::random,     "RANDOM UNIVERSE: on every cycle, nudges time, position, filter and feedback by a controlled random amount." },
             { id::tapeMemory, "TAPE MEMORY: wears out the tape. Wow, flutter, drifting speed, dull highs, dropouts and saturation - on any algorithm." },
             { id::outGain,    "Output level." },
-            { id::limiter,    "Output safety limiter. Leave it on unless you have a reason not to." },
-            { id::bypass,     "Bypass. The echoes fade out smoothly instead of clicking off." },
+            { id::limiter,    "Output safety limiter. Leave it on unless you have a reason not to. The light shows when it is working." },
+            { id::bypass,     "Power. Click to bypass DLAY: the echoes fade out smoothly instead of clicking off." },
             { id::quality,    "Oversampling of the saturation stages: ECO 1x, HIGH 2x, ULTRA 4x." },
             { id::mode,       "Delay algorithm. Use the arrows or the mouse wheel to step, click for the full list." },
         };
@@ -70,44 +72,142 @@ namespace
         return juce::String (ms, 1) + " ms";
     }
 
+    const char* const kFamilyNames[] = { "CLASSIC", "VINTAGE", "CREATIVE" };
+
     // ------------------------------------------------------------------------
-    //  glyphs for the top-bar keys
+    //  glyphs
     // ------------------------------------------------------------------------
-    void iconArrow (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, bool pointsRight)
+    const juce::PathStrokeType kIconStroke (1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+
+    void iconChevron (juce::Graphics& g, juce::Point<float> c, float size, juce::Colour colour, bool pointsRight)
     {
-        const auto ctr = r.getCentre();
-        const float s = 5.0f, d = pointsRight ? 1.0f : -1.0f;
+        const float d = pointsRight ? 1.0f : -1.0f;
         juce::Path p;
-        p.addTriangle (ctr.x - d * s * 0.7f, ctr.y - s, ctr.x - d * s * 0.7f, ctr.y + s, ctr.x + d * s * 0.9f, ctr.y);
-        g.setColour (c);
-        g.fillPath (p);
+        p.startNewSubPath (c.x - d * size * 0.45f, c.y - size);
+        p.lineTo (c.x + d * size * 0.55f, c.y);
+        p.lineTo (c.x - d * size * 0.45f, c.y + size);
+        g.setColour (colour);
+        g.strokePath (p, kIconStroke);
     }
 
-    void iconStar (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, bool filled)
+    juce::Path heartPath (juce::Point<float> c, float s)
     {
-        juce::Path star;
-        star.addStar (r.getCentre(), 5, 3.4f, 7.5f, 0.0f);
-        g.setColour (c);
-        if (filled) g.fillPath (star); else g.strokePath (star, juce::PathStrokeType (1.2f));
+        juce::Path heart;
+        heart.startNewSubPath (c.x, c.y + s * 0.92f);
+        heart.cubicTo (c.x - s * 1.45f, c.y - s * 0.05f, c.x - s * 0.80f, c.y - s * 1.25f, c.x, c.y - s * 0.42f);
+        heart.cubicTo (c.x + s * 0.80f, c.y - s * 1.25f, c.x + s * 1.45f, c.y - s * 0.05f, c.x, c.y + s * 0.92f);
+        heart.closeSubPath();
+        return heart;
+    }
+
+    void iconHeart (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour colour, bool filled)
+    {
+        const auto c = r.getCentre().translated (0.0f, 0.6f);
+        const auto heart = heartPath (c, 7.4f);
+
+        if (filled)
+        {
+            g.setGradientFill (accentGradient ({ c.x - 8.0f, c.y }, { c.x + 8.0f, c.y }));
+            g.fillPath (heart);
+        }
+        else
+        {
+            g.setColour (colour);
+            g.strokePath (heart, kIconStroke);
+        }
     }
 
     void iconCurvedArrow (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c, bool redo)
     {
         const auto ctr = r.getCentre();
-        const float rad = 5.5f, d = redo ? 1.0f : -1.0f;
+        const float rad = 6.6f, d = redo ? 1.0f : -1.0f;
         juce::Path arc;
-        arc.addCentredArc (ctr.x, ctr.y + 1.0f, rad, rad, 0.0f, d * -2.2f, d * 1.2f, true);
+        arc.addCentredArc (ctr.x, ctr.y + 1.2f, rad, rad, 0.0f, d * -2.2f, d * 1.2f, true);
         g.setColour (c);
-        g.strokePath (arc, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (arc, kIconStroke);
 
-        const juce::Point<float> tip (ctr.x + d * rad * std::sin (1.2f), ctr.y + 1.0f - rad * std::cos (1.2f));
+        const juce::Point<float> tip (ctr.x + d * rad * std::sin (1.2f), ctr.y + 1.2f - rad * std::cos (1.2f));
         juce::Path head;
-        head.addTriangle (tip.x + d * 1.0f, tip.y + 4.6f, tip.x - d * 4.2f, tip.y + 0.6f, tip.x + d * 3.2f, tip.y - 2.2f);
+        head.addTriangle (tip.x + d * 1.2f, tip.y + 5.4f, tip.x - d * 5.0f, tip.y + 0.7f, tip.x + d * 3.8f, tip.y - 2.6f);
         g.fillPath (head);
     }
 
+    void iconPower (juce::Graphics& g, juce::Rectangle<float> r, bool lit, float alpha)
+    {
+        const auto c = r.getCentre();
+        const float rad = 7.2f;
+        juce::Path p;
+        p.addCentredArc (c.x, c.y + 0.8f, rad, rad, 0.0f, 0.62f, 2.0f * kPiF - 0.62f, true);
+        p.startNewSubPath (c.x, c.y - rad - 1.4f);
+        p.lineTo (c.x, c.y - 0.6f);
+
+        if (lit)    g.setGradientFill (accentGradient ({ c.x - rad, c.y }, { c.x + rad, c.y }, alpha));
+        else        g.setColour (col::inkFaint.withMultipliedAlpha (alpha));
+
+        g.strokePath (p, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    /** Every algorithm has its own little constellation, made from its number. */
+    void drawConstellation (juce::Graphics& g, juce::Rectangle<float> area, int mode)
+    {
+        juce::Random rng ((juce::int64) (0x51DE5EED + mode * 7919));
+        const auto c = area.getCentre();
+        const float R = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f;
+
+        const int n = 5 + rng.nextInt (3);
+        std::vector<juce::Point<float>> stars;
+        float angle = rng.nextFloat() * 2.0f * kPiF;
+
+        for (int i = 0; i < n; ++i)
+        {
+            const float r = R * (0.42f + 0.52f * rng.nextFloat());
+            stars.push_back ({ c.x + std::sin (angle) * r, c.y - std::cos (angle) * r });
+            angle += (2.0f * kPiF / (float) n) * (0.62f + 0.5f * rng.nextFloat());
+        }
+
+        // one more star off the figure, joined to its middle
+        const auto spur = c + juce::Point<float> ((rng.nextFloat() - 0.5f) * R * 0.5f, (rng.nextFloat() - 0.5f) * R * 0.5f);
+
+        juce::Path lines;
+        for (int i = 0; i < n; ++i)
+        {
+            if (i == 0) lines.startNewSubPath (stars[(size_t) i]);
+            else        lines.lineTo (stars[(size_t) i]);
+        }
+        lines.startNewSubPath (stars[(size_t) (n / 2)]);
+        lines.lineTo (spur);
+
+        g.setGradientFill (accentGradient ({ area.getX(), c.y }, { area.getRight(), c.y }, 0.8f));
+        g.strokePath (lines, juce::PathStrokeType (1.1f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        stars.push_back (spur);
+        const int brightest = rng.nextInt (n);
+
+        for (int i = 0; i < (int) stars.size(); ++i)
+        {
+            const auto p = stars[(size_t) i];
+            const bool big = i == brightest;
+            const float r = big ? 2.6f : 1.3f + 0.9f * rng.nextFloat();
+            const auto tint = (i % 2) == 0 ? col::pink : col::purple;
+            const float halo = r * 3.2f;
+
+            g.setGradientFill (juce::ColourGradient (tint.withAlpha (0.55f), p.x, p.y, tint.withAlpha (0.0f), p.x + halo, p.y, true));
+            g.fillEllipse (p.x - halo, p.y - halo, 2.0f * halo, 2.0f * halo);
+
+            if (big)
+            {
+                g.setColour (col::star.withAlpha (0.8f));
+                g.fillRect (p.x - 6.5f, p.y - 0.45f, 13.0f, 0.9f);
+                g.fillRect (p.x - 0.45f, p.y - 6.5f, 0.9f, 13.0f);
+            }
+
+            g.setColour (col::star);
+            g.fillEllipse (p.x - r, p.y - r, 2.0f * r, 2.0f * r);
+        }
+    }
+
     // ------------------------------------------------------------------------
-    /** Preset name on a read-out; click to open the library. */
+    /** Preset name on a dark pill; click to open the library. */
     class PresetDisplay : public juce::Component,
                           public juce::SettableTooltipClient
     {
@@ -118,28 +218,36 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
-            const auto b = getLocalBounds().toFloat();
-            drawScreen (g, b.reduced (1.0f), 4.0f);
+            const auto b = getLocalBounds().toFloat().reduced (1.5f);
+            const float corner = b.getHeight() * 0.5f;
+            drawScreen (g, b, corner, 0.85f);
 
-            auto text = b.reduced (12.0f, 2.0f);
+            {
+                juce::Graphics::ScopedSaveState state (g);
+                juce::Path clip;
+                clip.addRoundedRectangle (b, corner);
+                g.reduceClipRegion (clip);
+                drawStars (g, b, 0x9E5E7u, 26, 0.7f);
+            }
 
-            g.setFont (font (FontKind::semiBold, 8.5f, 0.2f));
-            g.setColour (col::orange);
-            g.drawText (category.isEmpty() ? juce::String ("PRESET") : category.toUpperCase(), text.removeFromTop (12.0f).translated (0.0f, 2.0f),
-                        juce::Justification::centredLeft, true);
+            auto text = b.reduced (24.0f, 0.0f).withTrimmedRight (20.0f);
 
-            drawGlowText (g, name + (modified ? " *" : ""), text.translated (0.0f, -1.0f), juce::Justification::centredLeft,
-                          font (FontKind::semiBold, 18.0f, 0.06f), col::cream);
+            drawAccentText (g, category.isEmpty() ? juce::String ("PRESET") : category.toUpperCase(),
+                            text.withY (b.getY() + 6.0f).withHeight (13.0f), juce::Justification::centredLeft, capsFont (10.0f));
+
+            g.setFont (font (FontKind::bold, 16.0f, 0.0f));
+            g.setColour (col::star);
+            g.drawText (name + (modified ? " *" : ""), text.withY (b.getY() + 17.5f).withHeight (22.0f), juce::Justification::centredLeft, true);
 
             // chevron: the library opens below
-            const auto ctr = juce::Point<float> (b.getRight() - 15.0f, b.getCentreY());
+            const auto ctr = juce::Point<float> (b.getRight() - 24.0f, b.getCentreY());
             juce::Path chevron;
             const float flip = open ? -1.0f : 1.0f;
-            chevron.startNewSubPath (ctr.x - 4.5f, ctr.y - 2.2f * flip);
-            chevron.lineTo (ctr.x, ctr.y + 2.4f * flip);
-            chevron.lineTo (ctr.x + 4.5f, ctr.y - 2.2f * flip);
-            g.setColour (isMouseOver() ? col::amber : col::creamDim);
-            g.strokePath (chevron, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            chevron.startNewSubPath (ctr.x - 5.0f, ctr.y - 2.4f * flip);
+            chevron.lineTo (ctr.x, ctr.y + 2.8f * flip);
+            chevron.lineTo (ctr.x + 5.0f, ctr.y - 2.4f * flip);
+            g.setColour (isMouseOver() ? col::star : col::starDim);
+            g.strokePath (chevron, kIconStroke);
         }
 
         void mouseDown (const juce::MouseEvent&) override   { if (onClick != nullptr) onClick(); }
@@ -178,18 +286,19 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
-            const auto b = getLocalBounds().toFloat();
-            drawScreen (g, b.reduced (1.0f), 3.0f);
+            const auto b = getLocalBounds().toFloat().reduced (1.5f);
+            drawScreen (g, b, 12.0f, 0.8f);
 
-            auto text = b.reduced (8.0f, 1.0f);
-            const auto caption = text.removeFromBottom (12.0f).translated (0.0f, -2.0f);
+            const juce::String value = synced ? juce::String (kDivisions[(size_t) juce::jlimit (0, kNumDivisions - 1, divisionIndex)].name) : formatMs (shownMs);
 
-            drawGlowText (g, synced ? juce::String (kDivisions[(size_t) juce::jlimit (0, kNumDivisions - 1, divisionIndex)].name) : formatMs (shownMs),
-                          text.translated (0.0f, 1.5f), juce::Justification::centred, monoFont (17.0f), col::amber);
+            g.setFont (monoFont (19.0f));
+            g.setColour (col::star);
+            g.drawText (value, b.withTrimmedBottom (b.getHeight() * 0.36f).translated (0.0f, 3.0f), juce::Justification::centred, false);
 
-            g.setFont (monoFont (8.5f));
-            g.setColour (col::creamFaint);
-            g.drawText (synced ? "= " + formatMs (shownMs) : juce::String ("FREE RUNNING"), caption, juce::Justification::centred, false);
+            g.setFont (capsFont (10.0f));
+            g.setColour (col::starDim);
+            g.drawText (synced ? "= " + formatMs (shownMs).toUpperCase() : juce::String ("FREE RUNNING"),
+                        b.withTop (b.getBottom() - 19.0f).translated (0.0f, -4.0f), juce::Justification::centred, false);
         }
 
         void mouseDown (const juce::MouseEvent&) override
@@ -234,6 +343,179 @@ namespace
         double wheelAccumulator = 0.0;
         juce::ParameterAttachment division;
     };
+
+    // ------------------------------------------------------------------------
+    /** The algorithm, on a screen of its own: the three families along the top, the
+        algorithm's constellation and name, and one dot for each algorithm of its family.
+        Click a family, an arrow or a dot to go there; anywhere else opens the full list. */
+    class ModeScreen : public ChoiceDisplay
+    {
+    public:
+        explicit ModeScreen (APVTS& state) : ChoiceDisplay (state, id::mode) {}
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto b = getLocalBounds().toFloat().reduced (1.5f);
+            constexpr float corner = 14.0f;
+            drawScreen (g, b, corner);
+
+            {
+                juce::Graphics::ScopedSaveState state (g);
+                juce::Path clip;
+                clip.addRoundedRectangle (b, corner);
+                g.reduceClipRegion (clip);
+                drawStars (g, b, 0xA11C0u, 40, 0.8f);
+            }
+
+            const auto& info = modeInfo (current);
+            const auto zones = layout();
+            const bool hover = isMouseOver (true);
+
+            for (int f = 0; f < 3; ++f)
+            {
+                if (f == (int) info.family)
+                {
+                    drawAccentText (g, kFamilyNames[f], zones.family[f], juce::Justification::centredLeft, capsFont (10.0f));
+                }
+                else
+                {
+                    g.setFont (capsFont (10.0f));
+                    g.setColour (col::starFaint);
+                    g.drawText (kFamilyNames[f], zones.family[f], juce::Justification::centredLeft, false);
+                }
+            }
+
+            const auto arrow = hover ? col::star : col::starDim;
+            iconChevron (g, zones.previous.getCentre(), 4.6f, arrow, false);
+            iconChevron (g, zones.next.getCentre(), 4.6f, arrow, true);
+
+            drawConstellation (g, zones.glyph, current);
+
+            g.setFont (font (FontKind::heavy, 21.0f, -0.005f));
+            g.setColour (col::star);
+            g.drawText (info.name, zones.name, juce::Justification::centredLeft, true);
+
+            for (int k = 0; k < (int) zones.dots.size(); ++k)
+            {
+                const auto d = zones.dots[(size_t) k];
+
+                if (zones.firstOfFamily + k == current)
+                {
+                    g.setGradientFill (accentGradient (d));
+                    g.fillRoundedRectangle (d, d.getHeight() * 0.5f);
+                }
+                else
+                {
+                    g.setColour (juce::Colours::white.withAlpha (0.26f));
+                    g.fillEllipse (d);
+                }
+            }
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            const auto zones = layout();
+            const auto pos = e.position;
+
+            for (int f = 0; f < 3; ++f)
+            {
+                if (zones.family[f].expanded (5.0f, 7.0f).contains (pos))
+                {
+                    if ((int) modeInfo (current).family != f)
+                        for (int m = 0; m < kNumModes; ++m)
+                            if ((int) modeInfo (m).family == f) { setIndex (m); break; }
+                    return;
+                }
+            }
+
+            if (zones.previous.contains (pos))      { setIndex (current - 1); return; }
+            if (zones.next.contains (pos))          { setIndex (current + 1); return; }
+
+            for (int k = 0; k < (int) zones.dots.size(); ++k)
+            {
+                if (zones.dots[(size_t) k].expanded (3.5f, 8.0f).contains (pos))
+                {
+                    setIndex (zones.firstOfFamily + k);
+                    return;
+                }
+            }
+
+            showMenu();
+        }
+
+    private:
+        struct Zones
+        {
+            juce::Rectangle<float> family[3], previous, next, glyph, name;
+            std::vector<juce::Rectangle<float>> dots;
+            int firstOfFamily = 0;
+        };
+
+        Zones layout() const
+        {
+            Zones z;
+            const auto b = getLocalBounds().toFloat().reduced (1.5f);
+            const auto f = capsFont (10.0f);
+
+            float x = b.getX() + 15.0f;
+            for (int i = 0; i < 3; ++i)
+            {
+                const float w = textWidth (f, kFamilyNames[i]) + 2.0f;
+                z.family[i] = { x, b.getY() + 9.0f, w, 14.0f };
+                x += w + 11.0f;
+            }
+
+            z.next     = { b.getRight() - 34.0f, b.getY() + 3.0f, 30.0f, 26.0f };
+            z.previous = z.next.translated (-30.0f, 0.0f);
+
+            z.glyph = { b.getX() + 13.0f, b.getY() + 30.0f, 46.0f, 46.0f };
+            z.name  = { b.getX() + 70.0f, b.getY() + 30.0f, b.getWidth() - 82.0f, 26.0f };
+
+            const int family = (int) modeInfo (current).family;
+            int count = 0;
+            z.firstOfFamily = -1;
+
+            for (int m = 0; m < kNumModes; ++m)
+            {
+                if ((int) modeInfo (m).family == family)
+                {
+                    if (z.firstOfFamily < 0) z.firstOfFamily = m;
+                    ++count;
+                }
+            }
+
+            float dx = b.getX() + 71.0f;
+            const float dy = b.getY() + 63.0f;
+
+            for (int k = 0; k < count; ++k)
+            {
+                const bool selected = z.firstOfFamily + k == current;
+                const float w = selected ? 17.0f : 5.0f;
+                z.dots.push_back ({ dx, dy, w, 5.0f });
+                dx += w + 6.0f;
+            }
+
+            return z;
+        }
+    };
+
+    // ------------------------------------------------------------------------
+    //  the lower card's pages: which dial sits where, and what it says underneath
+    // ------------------------------------------------------------------------
+    struct DockCell { const char* paramId; const char* legend; const char* line; };
+
+    constexpr DockCell kTimeCells[] =
+    {
+        { id::warp,       "Time Warp",       "Speeds the echoes up or slows them down" },
+        { id::collapse,   "Time Collapse",   "Echoes bunch up like a bouncing ball" },
+        { id::random,     "Random Universe", "Rolls new times and places every cycle" },
+        { id::tapeMemory, "Tape Memory",     "Wow, flutter, dropouts and worn highs" },
+        { id::pitch,      "Pitch",           "Transposes every repeat again" },
+        { id::reverse,    "Reverse",         "Blends in echoes played backwards" },
+    };
+
+    constexpr const char* kTimeHint  = "Bend time.  Shift-drag any dial for fine control, double-click it to reset, double-click its name to type a value.";
+    constexpr const char* kSpaceHint = "Shape space.  Drag inside the orbit radar on the display to set the path, double-click it for the next shape.";
 }
 
 // ============================================================================
@@ -246,21 +528,29 @@ public:
         : editor (e), proc (p), apvts (p.apvts), visualizer (p), motion (p), browser (p), timeReadout (p)
     {
         using Size = Knob::Size;
+        using Look = KeyButton::Look;
+        using OnFill = KeyButton::OnFill;
 
         // ---- top bar ---------------------------------------------------------
-        addKey (bypassKey, "BYPASS", col::red);
+        addAndMakeVisible (bypassKey);
         bypassKey.attach (apvts, id::bypass);
+        bypassKey.setLook (Look::round);
+        bypassKey.setOnFill (OnFill::none);
+        bypassKey.drawIcon = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
+        {
+            iconPower (g, r, ! bypassKey.getToggleState(), c.getFloatAlpha());
+        };
         bypassKey.setTooltip (tooltipFor (id::bypass));
 
-        addKey (prevKey, "<");
-        prevKey.setShowLed (false);
-        prevKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconArrow (g, r, c, false); };
+        addAndMakeVisible (prevKey);
+        prevKey.setLook (Look::round);
+        prevKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconChevron (g, r.getCentre().translated (-0.6f, 0.0f), 5.4f, c, false); };
         prevKey.setTooltip ("Previous preset");
         prevKey.onClick = [this] { stepPreset (-1); };
 
-        addKey (nextKey, ">");
-        nextKey.setShowLed (false);
-        nextKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconArrow (g, r, c, true); };
+        addAndMakeVisible (nextKey);
+        nextKey.setLook (Look::round);
+        nextKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconChevron (g, r.getCentre().translated (0.6f, 0.0f), 5.4f, c, true); };
         nextKey.setTooltip ("Next preset");
         nextKey.onClick = [this] { stepPreset (1); };
 
@@ -268,12 +558,11 @@ public:
         presetDisplay.setTooltip ("Open the preset library: search, categories, favourites, save.");
         presetDisplay.onClick = [this] { showBrowser (! browser.isVisible(), false); };
 
-        addKey (favKey, "FAV");
-        favKey.setShowLed (false);
+        addAndMakeVisible (favKey);
+        favKey.setLook (Look::round);
         favKey.drawIcon = [this] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
         {
-            const bool fav = proc.presets->isFavourite (proc.presets->getCurrentIndex());
-            iconStar (g, r, fav ? col::amber : c, fav);
+            iconHeart (g, r, c, proc.presets->isFavourite (proc.presets->getCurrentIndex()));
         };
         favKey.setTooltip ("Mark this preset as a favourite");
         favKey.onClick = [this]
@@ -284,59 +573,33 @@ public:
             favKey.repaint();
         };
 
-        addKey (saveKey, "SAVE");
-        saveKey.setShowLed (false);
+        addAndMakeVisible (saveKey);
         saveKey.setTooltip ("Save the current sound as a preset");
         saveKey.onClick = [this] { showBrowser (true, true); };
 
-        addKey (undoKey, "UNDO");
-        undoKey.setShowLed (false);
+        addAndMakeVisible (undoKey);
+        undoKey.setLook (Look::round);
         undoKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconCurvedArrow (g, r, c, false); };
         undoKey.setTooltip ("Undo");
         undoKey.onClick = [this] { proc.undoManager.undo(); };
 
-        addKey (redoKey, "REDO");
-        redoKey.setShowLed (false);
+        addAndMakeVisible (redoKey);
+        redoKey.setLook (Look::round);
         redoKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconCurvedArrow (g, r, c, true); };
         redoKey.setTooltip ("Redo");
         redoKey.onClick = [this] { proc.undoManager.redo(); };
 
-        addKey (viewKey, "ADVANCED", col::cyan);
-        viewKey.setTooltip ("Switch between the compact view and the full view with DETAIL and MOTION.");
+        addAndMakeVisible (viewKey);
+        viewKey.setTooltip ("Show or hide the lower panel with the TIME, SPACE and MOTION pages.");
         viewKey.onClick = [this] { editor.setAdvancedView (! editor.isAdvancedView()); };
 
-        addKey (menuKey, "MENU");
-        menuKey.setShowLed (false);
+        addAndMakeVisible (menuKey);
         menuKey.setTooltip ("Settings: quality, mix lock, window size, preset folder.");
         menuKey.onClick = [this] { showSettingsMenu(); };
 
-        // ---- delay engine ----------------------------------------------------
-        static const char* familyNames[] = { "CLASSIC", "VINTAGE", "CREATIVE" };
-        static const char* familyTips[]  = { "Classic delays: digital, stereo, ping-pong, dual, multi-tap, slapback.",
-                                             "Vintage delays: tape, bucket-brigade, tape echo, warm analog, degraded, lo-fi.",
-                                             "Creative delays: reverse, granular, pitch, spectral, diffused, glitch, fractal, random, shimmer." };
-
-        for (int f = 0; f < 3; ++f)
-        {
-            auto& key = familyKeys[(size_t) f];
-            key = std::make_unique<KeyButton> (familyNames[f]);
-            key->setFontHeight (10.5f);
-            key->setTooltip (familyTips[f]);
-            key->onClick = [this, f]
-            {
-                const int mode = juce::roundToInt (apvts.getRawParameterValue (id::mode)->load());
-                if ((int) modeInfo (mode).family != f)
-                {
-                    for (int m = 0; m < kNumModes; ++m)
-                        if ((int) modeInfo (m).family == f) { modeDisplay.setIndex (m); break; }
-                }
-            };
-            addAndMakeVisible (*key);
-        }
-
-        addAndMakeVisible (modeDisplay);
-        modeDisplay.setFontHeight (18.0f);
-        modeDisplay.buildMenu = [] (juce::PopupMenu& menu, int current)
+        // ---- engine ------------------------------------------------------------
+        addAndMakeVisible (modeScreen);
+        modeScreen.buildMenu = [] (juce::PopupMenu& menu, int current)
         {
             int family = -1;
             for (int m = 0; m < kNumModes; ++m)
@@ -344,106 +607,113 @@ public:
                 if ((int) modeInfo (m).family != family)
                 {
                     family = (int) modeInfo (m).family;
-                    menu.addSectionHeader (familyNames[family]);
+                    menu.addSectionHeader (kFamilyNames[family]);
                 }
                 menu.addItem (m + 1, modeInfo (m).name, true, m == current);
             }
         };
-        modeDisplay.onUserChange = [this] (int newMode) { applyModeConveniences (newMode); };
+        modeScreen.onUserChange = [this] (int newMode) { applyModeConveniences (newMode); };
 
-        makeKnob (timeKnob, id::time, "TIME", Size::large);
-        makeKnob (divisionKnob, id::division, "TIME", Size::large);
+        makeKnob (timeKnob, id::time, "Time", Size::large);
+        makeKnob (divisionKnob, id::division, "Time", Size::large);
+        makeKnob (feedbackKnob, id::feedback, "Feedback", Size::medium);
+        makeKnob (mixKnob, id::mix, "Mix", Size::medium, Knob::Body::dark);
+
         addAndMakeVisible (timeReadout);
         addAndMakeVisible (syncSwitch);
         syncSwitch.setTooltip (tooltipFor (id::sync));
-        makeKnob (inertiaKnob, id::inertia, "INERTIA", Size::compact, col::cream);
+        makeKnob (inertiaKnob, id::inertia, "Inertia", Size::compact);
 
-        makeKnob (feedbackKnob, id::feedback, "FEEDBACK", Size::medium);
-        makeKnob (mixKnob, id::mix, "MIX", Size::medium);
-        makeKnob (macroA, id::algoA, "A", Size::compact, col::orange);
-        makeKnob (macroB, id::algoB, "B", Size::compact, col::orange);
-        makeKnob (pingPongKnob, id::pingPong, "PING-PONG", Size::compact, col::cyan);
-        makeKnob (widthKnob, id::width, "WIDTH", Size::compact, col::cyan);
-
-        addAndMakeVisible (stereoSwitch);
-        stereoSwitch.setTooltip (tooltipFor (id::stereoMode));
+        makeKnob (macroA, id::algoA, "A", Size::compact);
+        makeKnob (macroB, id::algoB, "B", Size::compact);
+        makeKnob (pingPongKnob, id::pingPong, "Ping-Pong", Size::compact);
+        makeKnob (widthKnob, id::width, "Width", Size::compact);
 
         // ---- character ---------------------------------------------------------
-        makeKnob (saturationKnob, id::saturation, "SATURATION", Size::medium, col::orange);
-        makeKnob (driveKnob, id::drive, "DRIVE", Size::medium, col::orange);
+        makeKnob (saturationKnob, id::saturation, "Saturation", Size::medium);
+        makeKnob (driveKnob, id::drive, "Drive", Size::medium);
         addAndMakeVisible (satTypeDisplay);
-        satTypeDisplay.setCaption ("TYPE");
-        satTypeDisplay.setFontHeight (13.0f);
+        satTypeDisplay.setCaption ("Type", Size::medium);
         satTypeDisplay.setTooltip (tooltipFor (id::satType));
 
         addAndMakeVisible (filterScope);
-        makeKnob (lowCutKnob, id::lowCut, "LOW CUT", Size::medium);
-        makeKnob (highCutKnob, id::highCut, "HIGH CUT", Size::medium);
-        makeKnob (resonanceKnob, id::resonance, "RESONANCE", Size::compact);
+        makeKnob (lowCutKnob, id::lowCut, "Low Cut", Size::medium);
+        makeKnob (highCutKnob, id::highCut, "High Cut", Size::medium);
+        makeKnob (resonanceKnob, id::resonance, "Resonance", Size::medium);
 
-        makeKnob (diffusionKnob, id::diffusion, "DIFFUSION", Size::medium);
-        makeKnob (modDepthKnob, id::modDepth, "MODULATION", Size::medium);
-        makeKnob (pitchKnob, id::pitch, "PITCH", Size::medium, col::cyan);
-        pitchKnob->slider().setMouseDragSensitivity (260);
+        makeKnob (diffusionKnob, id::diffusion, "Diffusion", Size::compact);
+        makeKnob (modDepthKnob, id::modDepth, "Mod Depth", Size::compact);
+        makeKnob (modRateKnob, id::modRate, "Mod Rate", Size::compact);
+        makeKnob (duckingKnob, id::ducking, "Ducking", Size::compact);
 
-        makeKnob (modRateKnob, id::modRate, "MOD RATE", Size::compact);
-        makeKnob (reverseKnob, id::reverse, "REVERSE", Size::compact, col::cyan);
-        makeKnob (duckingKnob, id::ducking, "DUCKING", Size::compact);
-
-        // ---- signature -----------------------------------------------------------
-        makeKnob (warpKnob, id::warp, "TIME WARP", Size::medium);
-        makeKnob (orbitKnob, id::orbit, "ECHO ORBIT", Size::medium, col::cyan);
-        makeKnob (ghostKnob, id::ghost, "GHOST", Size::medium, col::cyan);
-        makeKnob (collapseKnob, id::collapse, "COLLAPSE", Size::medium);
-        makeKnob (randomKnob, id::random, "RANDOM", Size::medium);
-        makeKnob (tapeMemoryKnob, id::tapeMemory, "TAPE MEMORY", Size::medium, col::orange);
-
-        addKey (freezeKey, "FREEZE", col::cyan);
+        // ---- under the display: hold keys and the output -------------------------
+        addAndMakeVisible (freezeKey);
         freezeKey.attach (apvts, id::freeze);
-        freezeKey.setFontHeight (12.5f);
+        freezeKey.setOnFill (OnFill::ice);
+        freezeKey.setFontSize (13.0f);
         freezeKey.setTooltip (tooltipFor (id::freeze));
 
-        addKey (infiniteKey, "INFINITE", col::orange);
+        addAndMakeVisible (infiniteKey);
         infiniteKey.attach (apvts, id::infinite);
-        infiniteKey.setFontHeight (12.5f);
+        infiniteKey.setOnFill (OnFill::accent);
+        infiniteKey.setFontSize (13.0f);
         infiniteKey.setTooltip (tooltipFor (id::infinite));
 
-        addAndMakeVisible (vuL);
-        addAndMakeVisible (vuR);
-        makeKnob (outGainKnob, id::outGain, "OUTPUT", Size::medium, col::cream);
+        addAndMakeVisible (meterL);
+        addAndMakeVisible (meterR);
+        makeKnob (outGainKnob, id::outGain, "Output", Size::compact);
 
-        addKey (limiterKey, "LIMIT", col::amber);
+        addAndMakeVisible (limiterKey);
         limiterKey.attach (apvts, id::limiter);
+        limiterKey.setDot (true);
         limiterKey.setTooltip (tooltipFor (id::limiter));
 
-        // ---- detail ------------------------------------------------------------------
-        makeKnob (offsetKnob, id::offset, "OFFSET", Size::compact, col::cyan);
-        makeKnob (spreadKnob, id::spread, "SPREAD", Size::compact, col::cyan);
+        // ---- lower card: tabs and the dials of the TIME and SPACE pages ------------
+        addChildComponent (dockTabs);
+        dockTabs.setTooltip ("TIME: warp, collapse, pitch and reverse.  SPACE: orbit, ghosts and the stereo field.  MOTION: six lanes of modulation.");
+        dockTabs.onChange = [this] (int index) { setPage (index); };
+
+        for (size_t i = 0; i < timeKnobs.size(); ++i)
+        {
+            makeKnob (timeKnobs[i], kTimeCells[i].paramId, kTimeCells[i].legend, Size::large);
+            timeKnobs[i]->setVisible (false);
+        }
+
+        if (auto* pitch = timeKnobs[4].get())
+            pitch->slider().setMouseDragSensitivity (260);
+
+        makeKnob (orbitKnob, id::orbit, "Echo Orbit", Size::large);
+        makeKnob (ghostKnob, id::ghost, "Ghost Mode", Size::large);
+        makeKnob (offsetKnob, id::offset, "Offset", Size::large);
+        makeKnob (spreadKnob, id::spread, "Spread", Size::large);
+        makeKnob (orbitRateKnob, id::orbitRate, "Rate", Size::compact);
 
         addChildComponent (orbitShapeDisplay);
-        orbitShapeDisplay.setCaption ("ORBIT SHAPE");
-        orbitShapeDisplay.setFontHeight (13.0f);
-        orbitShapeDisplay.setColour (col::cyan);
+        orbitShapeDisplay.setCaption ("Orbit Shape", Size::compact);
         orbitShapeDisplay.setTooltip (tooltipFor (id::orbitShape));
 
-        makeKnob (orbitRateKnob, id::orbitRate, "ORBIT RATE", Size::compact, col::cyan);
         addChildComponent (orbitDivDisplay);
-        orbitDivDisplay.setCaption ("ORBIT LENGTH");
-        orbitDivDisplay.setFontHeight (13.0f);
-        orbitDivDisplay.setColour (col::cyan);
+        orbitDivDisplay.setCaption ("Length", Size::compact);
+        orbitDivDisplay.setFontSize (12.5f);
         orbitDivDisplay.setTooltip (tooltipFor (id::orbitDiv));
 
         addChildComponent (orbitSyncSwitch);
         orbitSyncSwitch.setTooltip (tooltipFor (id::orbitSync));
 
+        addChildComponent (stereoSwitch);
+        stereoSwitch.setTooltip (tooltipFor (id::stereoMode));
+
         addChildComponent (qualityDisplay);
-        qualityDisplay.setCaption ("QUALITY");
-        qualityDisplay.setFontHeight (13.0f);
+        qualityDisplay.setCaption ("Quality", Size::compact);
         qualityDisplay.setTooltip (tooltipFor (id::quality));
+
+        for (auto* k : { orbitKnob.get(), ghostKnob.get(), offsetKnob.get(), spreadKnob.get(), orbitRateKnob.get() })
+            k->setVisible (false);
 
         // ---- centre + overlays -----------------------------------------------------------
         addAndMakeVisible (visualizer);
         addChildComponent (motion);
+        dockTabs.toFront (false);                   // the tabs sit in the MOTION page's top row
 
         addChildComponent (browser);
         browser.onClose = [this] { showBrowser (false, false); };
@@ -458,6 +728,11 @@ public:
         visualizer.setComponentID ("visualizer");
         motion.setComponentID ("motion");
         browser.setComponentID ("browser");
+        modeScreen.setComponentID ("modeScreen");
+        dockTabs.setComponentID ("pages");
+
+        page = juce::jlimit (0, (int) numPages - 1, proc.getUiPage());
+        dockTabs.setIndex (page, false);
 
         refreshDynamicState (true);
     }
@@ -467,16 +742,26 @@ public:
     {
         isAdvanced = advanced;
         viewKey.setToggleState (advanced, juce::dontSendNotification);
-
-        for (auto* c : std::initializer_list<juce::Component*> { offsetKnob.get(), spreadKnob.get(), &orbitShapeDisplay,
-                                                                 &orbitSyncSwitch, &qualityDisplay, &motion })
-            c->setVisible (advanced);
-
+        updatePageVisibility();
         refreshDynamicState (true);
         repaint();
     }
 
-    void showLane (int laneIndex)     { motion.setLane (laneIndex); }
+    void setPage (int newPage)
+    {
+        page = juce::jlimit (0, (int) numPages - 1, newPage);
+        proc.setUiPage (page);
+        dockTabs.setIndex (page, false);
+        updatePageVisibility();
+        refreshDynamicState (true);
+        repaint();
+    }
+
+    void showLane (int laneIndex)
+    {
+        setPage (pageMotion);
+        motion.setLane (laneIndex);
+    }
 
     void showBrowser (bool show, bool focusSave)
     {
@@ -498,18 +783,18 @@ public:
 
         visualizer.tick (dt);
 
-        if (isAdvanced)
+        if (isAdvanced && page == pageMotion)
             motion.tick (dt);
 
-        vuL.push (vis.outPeakL.exchange (0.0f, std::memory_order_relaxed), dt);
-        vuR.push (vis.outPeakR.exchange (0.0f, std::memory_order_relaxed), dt);
+        meterL.push (vis.outPeakL.exchange (0.0f, std::memory_order_relaxed), dt);
+        meterR.push (vis.outPeakR.exchange (0.0f, std::memory_order_relaxed), dt);
 
         filterScope.set (vis.hpHz.load (std::memory_order_relaxed), vis.lpHz.load (std::memory_order_relaxed),
                          pResonance->load() * 0.01f);
 
-        // the limiter lamp flickers brighter while it is pulling the level down
+        // the limiter's light glows while it is pulling the level down
         const float gr = vis.limiterGr.exchange (1.0f, std::memory_order_relaxed);
-        limiterKey.setLit (limiterKey.getToggleState() ? juce::jlimit (0.45f, 1.0f, 0.45f + (1.0f - gr) * 4.0f) : 0.0f);
+        limiterKey.setLit (limiterKey.getToggleState() ? juce::jlimit (0.0f, 1.0f, (1.0f - gr) * 5.0f) : 0.0f);
 
         timeReadout.refresh();
         refreshDynamicState (false);
@@ -518,18 +803,19 @@ public:
     // ------------------------------------------------------------------------
     void paint (juce::Graphics& g) override
     {
-        // Panels, textures, screws and legends never change, so they are rendered once per
-        // size at the display's real pixel density. Touching a knob then costs one blit
-        // instead of redrawing the faceplate.
+        // The page, the cards and every fixed legend never change, so they are rendered once
+        // per size at the display's real pixel density. Touching a dial then costs one blit
+        // instead of redrawing the faceplate (the cards' soft shadows are the expensive part).
         const float scale = juce::jlimit (0.25f, 8.0f, g.getInternalContext().getPhysicalPixelScaleFactor());
         const int w = juce::jmax (1, (int) std::ceil ((float) getWidth() * scale));
         const int h = juce::jmax (1, (int) std::ceil ((float) getHeight() * scale));
 
         if (! faceplate.isValid() || faceplate.getWidth() != w || faceplate.getHeight() != h
-             || std::abs (scale - faceplateScale) > 1.0e-4f || faceplateAdvanced != isAdvanced)
+             || std::abs (scale - faceplateScale) > 1.0e-4f || faceplateAdvanced != isAdvanced || faceplatePage != page)
         {
             faceplateScale = scale;
             faceplateAdvanced = isAdvanced;
+            faceplatePage = page;
             faceplate = juce::Image (juce::Image::RGB, w, h, true);
 
             juce::Graphics layer (faceplate);
@@ -537,91 +823,106 @@ public:
             paintFaceplate (layer);
         }
 
-        {
-            juce::Graphics::ScopedSaveState state (g);
-            g.addTransform (juce::AffineTransform::scale (1.0f / faceplateScale));
-            g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
-            g.drawImageAt (faceplate, 0, 0);
-        }
-
-        // algorithm description under the mode read-out
-        g.setFont (font (FontKind::medium, 10.5f, 0.03f));
-        g.setColour (col::creamDim);
-        g.drawFittedText (modeInfo (juce::roundToInt (pMode->load())).description, descriptionArea, juce::Justification::centredLeft, 2, 0.9f);
+        juce::Graphics::ScopedSaveState state (g);
+        g.addTransform (juce::AffineTransform::scale (1.0f / faceplateScale));
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+        g.drawImageAt (faceplate, 0, 0);
     }
 
     void paintFaceplate (juce::Graphics& g)
     {
         const auto full = getLocalBounds().toFloat();
 
-        g.fillAll (col::bg);
-        g.setTiledImageFill (brushedTexture(), 0, 0, 0.35f);
-        g.fillRect (full);
+        drawPage (g, full);
 
-        // ---- top bar
-        const auto top = full.withHeight (56.0f);
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1d2024), 0.0f, 0.0f, juce::Colour (0xff111315), 0.0f, top.getBottom(), false));
-        g.fillRect (top);
-        g.setTiledImageFill (brushedTexture(), 0, 0, 0.6f);
-        g.fillRect (top);
-        g.setColour (col::orange);
-        g.fillRect (top.withHeight (2.0f));
-        g.setColour (juce::Colours::black);
-        g.fillRect (top.withTop (top.getBottom() - 1.0f));
-        g.setColour (juce::Colours::white.withAlpha (0.05f));
-        g.fillRect (top.withTop (top.getBottom() - 2.0f).withHeight (1.0f));
-
-        // logo: the name, and its last letter echoing away
+        // ---- logo: the name, and its full stop echoing away
         {
-            const auto logoFont = font (FontKind::bold, 40.0f, 0.13f);
-            const float x0 = 22.0f, y0 = 6.0f, h = 46.0f;
-            const float wordW = textWidth (logoFont, "DLAY");
-            const float advance = wordW - textWidth (logoFont, "DLA");
+            const auto logoFont = font (FontKind::heavy, 31.0f, -0.015f);
+            const float x0 = 24.0f, wordW = textWidth (logoFont, "DLAY");
 
             g.setFont (logoFont);
-            g.setColour (col::cream);
-            g.drawText ("DLAY", juce::Rectangle<float> (x0, y0, wordW + 8.0f, h), juce::Justification::centredLeft, false);
+            g.setColour (col::ink);
+            g.drawText ("DLAY", juce::Rectangle<float> (x0, 12.0f, wordW + 6.0f, 44.0f), juce::Justification::centredLeft, false);
 
-            static constexpr float fades[] = { 0.62f, 0.30f, 0.13f };
+            static constexpr float radii[]  = { 4.4f, 3.3f, 2.3f };
+            static constexpr float alphas[] = { 1.0f, 0.62f, 0.30f };
+            const juce::Colour tints[] = { col::pink, col::magenta, col::purple };
+            const float baseline = 34.0f + 0.355f * 31.0f;
+            float x = x0 + wordW + 8.0f;
+
             for (int i = 0; i < 3; ++i)
             {
-                g.setColour (col::orange.withAlpha (fades[i]));
-                g.drawText ("Y", juce::Rectangle<float> (x0 + wordW + advance * 0.86f * (float) i, y0, advance + 8.0f, h),
-                            juce::Justification::centredLeft, false);
+                const float r = radii[i];
+                g.setColour (tints[i].withAlpha (alphas[i]));
+                g.fillEllipse (x, baseline - 2.0f * r, 2.0f * r, 2.0f * r);
+                x += 2.0f * r + 4.5f;
             }
-
-            const float tx = x0 + wordW + advance * 0.86f * 3.0f + 12.0f;
-            g.setFont (font (FontKind::semiBold, 9.0f, 0.24f));
-            g.setColour (col::creamFaint);
-            g.drawText ("BEND TIME", juce::Rectangle<float> (tx, 14.0f, 110.0f, 9.0f), juce::Justification::centredLeft, false);
-            g.drawText ("SHAPE SPACE", juce::Rectangle<float> (tx, 24.5f, 110.0f, 9.0f), juce::Justification::centredLeft, false);
-            g.drawText ("CREATE ECHOES", juce::Rectangle<float> (tx, 35.0f, 110.0f, 9.0f), juce::Justification::centredLeft, false);
         }
 
-        g.setFont (monoFont (9.5f));
-        g.setColour (col::creamFaint);
-        g.drawText (juce::String ("v") + DLAY_VERSION_STRING, juce::Rectangle<float> (full.getRight() - 62.0f, 22.0f, 50.0f, 12.0f), juce::Justification::centredRight, false);
+        g.setFont (capsFont (10.0f));
+        g.setColour (col::inkFaint);
+        g.drawText (juce::String ("V") + DLAY_VERSION_STRING, juce::Rectangle<float> (940.0f, 26.0f, 106.0f, 16.0f), juce::Justification::centredRight, false);
 
-        // ---- panels
-        drawPanel (g, leftPanel.toFloat());
-        drawPanel (g, rightPanel.toFloat());
-        drawPanel (g, signaturePanel.toFloat());
+        // ---- cards
+        drawCard (g, leftCard.toFloat());
+        drawCard (g, rightCard.toFloat());
+        drawCard (g, screenCard.toFloat());
+        drawCard (g, stripCard.toFloat(), 16.0f);
 
-        drawSectionHeader (g, headerIn (leftPanel), "01", "DELAY ENGINE");
-        drawSectionHeader (g, headerIn (rightPanel), "03", "CHARACTER");
-        drawSectionHeader (g, headerIn (signaturePanel).withRight (832.0f), "04", "SIGNATURE");
-        drawSectionHeader (g, headerIn (signaturePanel).withLeft (852.0f), "05", "OUTPUT");
+        drawSectionHeader (g, headerIn (leftCard), "01", "ENGINE");
+        drawSectionHeader (g, headerIn (rightCard), "02", "CHARACTER");
 
-        if (isAdvanced)
+        // the hold keys on the left of the strip, the output on the right
+        g.setColour (col::line);
+        g.fillRect ((float) meterL.getX() - 14.0f, (float) stripCard.getY() + 14.0f, 1.0f, (float) stripCard.getHeight() - 28.0f);
+
+        if (! isAdvanced)
+            return;
+
+        // ---- lower card
+        drawCard (g, dockCard.toFloat());
+
+        if (page == pageMotion)
+            return;
+
+        g.setFont (font (FontKind::medium, 12.5f, 0.0f));
+        g.setColour (col::inkFaint);
+        g.drawText (page == pageTime ? kTimeHint : kSpaceHint,
+                    juce::Rectangle<float> ((float) dockTabs.getRight() + 24.0f, (float) dockTabs.getY(),
+                                            (float) dockCard.getRight() - 18.0f - (float) dockTabs.getRight() - 24.0f, (float) dockTabs.getHeight()),
+                    juce::Justification::centredRight, true);
+
+        const auto describe = [&] (int cell, const char* line)
         {
-            drawPanel (g, detailPanel.toFloat());
-            drawSectionHeader (g, headerIn (detailPanel).withRight (190.0f), "06", "DETAIL");
+            const auto r = cellBounds (cell);
+            g.setFont (font (FontKind::medium, 12.5f, 0.0f));
+            g.setColour (col::inkDim);
+            g.drawFittedText (line, juce::Rectangle<int> (r.getX() + 10, r.getY() + 116, r.getWidth() - 20, 34),
+                              juce::Justification::centredTop, 2, 1.0f);
+        };
 
-            g.setFont (font (FontKind::medium, 10.5f, 0.03f));
-            g.setColour (col::creamFaint);
-            g.drawFittedText ("Shift-drag any knob for fine control. Double-click a knob to reset it, double-click its name to type a value. "
-                              "Drag the tape in the display to change time and feedback.",
-                              juce::Rectangle<int> (610, detailPanel.getY() + 10, 440, detailPanel.getHeight() - 20), juce::Justification::centredLeft, 3, 0.9f);
+        if (page == pageTime)
+        {
+            for (int i = 0; i < (int) std::size (kTimeCells); ++i)
+                describe (i, kTimeCells[i].line);
+        }
+        else
+        {
+            describe (0, "Sends the echoes travelling around you");
+            describe (2, "Faint apparitions of earlier repeats");
+            describe (3, "Makes one side later than the other");
+            describe (4, "Fans taps, grains and bands out wide");
+
+            // hairlines set the orbit's own settings and the stereo options apart
+            g.setColour (col::line);
+            const auto orbit = cellBounds (1), stereo = cellBounds (5);
+            g.fillRect ((float) orbit.getRight() + 2.0f, (float) orbit.getY() + 8.0f, 1.0f, (float) orbit.getHeight() - 20.0f);
+            g.fillRect ((float) stereo.getX() - 3.0f, (float) stereo.getY() + 8.0f, 1.0f, (float) stereo.getHeight() - 20.0f);
+
+            g.setFont (Knob::legendFontFor (Knob::Size::compact));
+            g.setColour (col::ink);
+            g.drawText ("Stereo Mode", juce::Rectangle<int> (stereoSwitch.getX(), stereoSwitch.getBottom() + 2, stereoSwitch.getWidth(), 20),
+                        juce::Justification::centred, false);
         }
     }
 
@@ -631,134 +932,161 @@ public:
         faceplate = {};
 
         // ---- top bar
-        bypassKey.setBounds (296, 14, 66, 30);
-        prevKey.setBounds (378, 14, 30, 30);
-        presetDisplay.setBounds (412, 10, 348, 38);
-        nextKey.setBounds (764, 14, 30, 30);
-        favKey.setBounds (800, 14, 32, 30);
-        saveKey.setBounds (838, 14, 56, 30);
-        undoKey.setBounds (912, 14, 36, 30);
-        redoKey.setBounds (952, 14, 36, 30);
-        viewKey.setBounds (1004, 14, 92, 30);
-        menuKey.setBounds (1102, 14, 58, 30);
+        bypassKey.setBounds (176, 13, 42, 42);
+        prevKey.setBounds (232, 13, 42, 42);
+        presetDisplay.setBounds (278, 11, 372, 46);
+        nextKey.setBounds (654, 13, 42, 42);
+        favKey.setBounds (702, 13, 42, 42);
+        saveKey.setBounds (752, 15, 76, 38);
+        undoKey.setBounds (846, 13, 42, 42);
+        redoKey.setBounds (890, 13, 42, 42);
+        viewKey.setBounds (1058, 15, 116, 38);
+        menuKey.setBounds (1182, 15, 76, 38);
 
-        // ---- panels
-        leftPanel      = { 8, 62, 262, 400 };
-        rightPanel     = { W - 8 - 262, 62, 262, 400 };
-        signaturePanel = { 8, 468, W - 16, 104 };
-        detailPanel    = { 8, 578, W - 16, 72 };
+        // ---- cards
+        leftCard   = { 12, 68, 320, 400 };
+        rightCard  = { W - 12 - 320, 68, 320, 400 };
+        screenCard = { leftCard.getRight() + 10, 68, rightCard.getX() - leftCard.getRight() - 20, 324 };
+        stripCard  = { screenCard.getX(), screenCard.getBottom() + 10, screenCard.getWidth(), 66 };
+        dockCard   = { 12, 478, W - 24, 230 };
 
-        visualizer.setBounds (leftPanel.getRight() + 6, 62, rightPanel.getX() - leftPanel.getRight() - 12, 400);
-        motion.setBounds (8, 656, W - 16, 224);
-        browser.setBounds (0, 56, W, getHeight() - 56);
+        visualizer.setBounds (screenCard.reduced (5));
+        motion.setBounds (dockCard);
+        browser.setBounds (0, 64, W, getHeight() - 64);
 
-        // ---- delay engine
+        // ---- engine
         {
-            const int x = leftPanel.getX() + 16, w = leftPanel.getWidth() - 32, y = leftPanel.getY();
+            const int x = leftCard.getX() + 16, w = leftCard.getWidth() - 32, y = leftCard.getY();
 
-            const int tabW = (w - 8) / 3;
-            for (int f = 0; f < 3; ++f)
-                familyKeys[(size_t) f]->setBounds (x + f * (tabW + 4), y + 30, tabW, 24);
+            modeScreen.setBounds (x, y + 34, w, 86);
 
-            modeDisplay.setBounds (x, y + 60, w, 34);
-            descriptionArea = { x + 2, y + 96, w - 4, 26 };
-
-            timeKnob->setBounds (x - 2, y + 126, 104, 104);
+            timeKnob->setBounds (x, y + 128, 104, 112);
             divisionKnob->setBounds (timeKnob->getBounds());
-            timeReadout.setBounds (x + 108, y + 130, w - 108, 38);
-            syncSwitch.setBounds (x + 114, y + 172, 44, 62);
-            inertiaKnob->setBounds (x + 166, y + 174, 58, 60);
+            feedbackKnob->setBounds (x + 110, y + 146, 84, 94);
+            mixKnob->setBounds (x + 204, y + 146, 84, 94);
 
-            const int half = w / 2;
-            feedbackKnob->setBounds (x + (half - 76) / 2, y + 236, 76, 80);
-            mixKnob->setBounds (x + half + (half - 76) / 2, y + 236, 76, 80);
+            timeReadout.setBounds (x, y + 252, 150, 54);
+            syncSwitch.setBounds (x + 158, y + 246, 56, 68);
+            inertiaKnob->setBounds (x + 218, y + 246, 70, 68);
 
             const int quarter = w / 4;
-            macroA->setBounds (x + (quarter - 54) / 2, y + 318, 54, 58);
-            macroB->setBounds (x + quarter + (quarter - 54) / 2, y + 318, 54, 58);
-            pingPongKnob->setBounds (x + 2 * quarter + (quarter - 54) / 2, y + 318, 54, 58);
-            widthKnob->setBounds (x + 3 * quarter + (quarter - 54) / 2, y + 318, 54, 58);
-
-            stereoSwitch.setBounds (x, y + 378, w, 16);
+            int i = 0;
+            for (auto* k : { macroA.get(), macroB.get(), pingPongKnob.get(), widthKnob.get() })
+                k->setBounds (x + quarter * i++, y + 320, quarter, 66);
         }
 
         // ---- character
         {
-            const int x = rightPanel.getX() + 16, w = rightPanel.getWidth() - 32, y = rightPanel.getY();
+            const int x = rightCard.getX() + 16, w = rightCard.getWidth() - 32, y = rightCard.getY();
             const int third = w / 3;
 
-            saturationKnob->setBounds (x + (third - 74) / 2, y + 28, 74, 78);
-            driveKnob->setBounds (x + third + (third - 74) / 2, y + 28, 74, 78);
-            satTypeDisplay.setBounds (x + 2 * third + 2, y + 44, third - 2, 36);
+            saturationKnob->setBounds (x + (third - 84) / 2, y + 36, 84, 94);
+            driveKnob->setBounds (x + third + (third - 84) / 2, y + 36, 84, 94);
+            satTypeDisplay.setBounds (x + 2 * third + 2, y + 36, third - 2, 94);
 
-            filterScope.setBounds (x, y + 110, w, 44);
+            filterScope.setBounds (x, y + 138, w, 58);
 
-            lowCutKnob->setBounds (x + (third - 74) / 2, y + 158, 74, 78);
-            highCutKnob->setBounds (x + third + (third - 74) / 2, y + 158, 74, 78);
-            resonanceKnob->setBounds (x + 2 * third + (third - 56) / 2, y + 170, 56, 60);
+            int i = 0;
+            for (auto* k : { lowCutKnob.get(), highCutKnob.get(), resonanceKnob.get() })
+                k->setBounds (x + third * i++ + (third - 84) / 2, y + 204, 84, 94);
 
-            diffusionKnob->setBounds (x + (third - 74) / 2, y + 240, 74, 78);
-            modDepthKnob->setBounds (x + third + (third - 74) / 2, y + 240, 74, 78);
-            pitchKnob->setBounds (x + 2 * third + (third - 74) / 2, y + 240, 74, 78);
-
-            modRateKnob->setBounds (x + (third - 56) / 2, y + 326, 56, 60);
-            reverseKnob->setBounds (x + third + (third - 56) / 2, y + 326, 56, 60);
-            duckingKnob->setBounds (x + 2 * third + (third - 56) / 2, y + 326, 56, 60);
+            const int quarter = w / 4;
+            i = 0;
+            for (auto* k : { diffusionKnob.get(), modDepthKnob.get(), modRateKnob.get(), duckingKnob.get() })
+                k->setBounds (x + quarter * i++, y + 308, quarter, 66);
         }
 
-        // ---- signature + output
+        // ---- strip under the display
         {
-            const int y = signaturePanel.getY() + 24;
-            int x = 26;
+            const int y = stripCard.getY(), right = stripCard.getRight() - 14;
 
-            for (auto* k : { warpKnob.get(), orbitKnob.get(), ghostKnob.get(), collapseKnob.get(), randomKnob.get(), tapeMemoryKnob.get() })
+            freezeKey.setBounds (stripCard.getX() + 14, y + 13, 104, 40);
+            infiniteKey.setBounds (stripCard.getX() + 124, y + 13, 112, 40);
+
+            limiterKey.setBounds (right - 84, y + 15, 84, 36);
+            outGainKnob->setBounds (right - 84 - 8 - 68, y + 2, 68, 62);
+
+            const int meterRight = outGainKnob->getX() - 10;
+            const int meterX = infiniteKey.getRight() + 34;
+            meterL.setBounds (meterX, y + 20, meterRight - meterX, 12);
+            meterR.setBounds (meterX, y + 35, meterRight - meterX, 12);
+        }
+
+        // ---- lower card
+        {
+            dockTabs.setBounds (dockCard.getX() + 16, dockCard.getY() + 12, 300, 32);
+            motion.setHeaderInset (16 + 300 + 26);
+
+            // TIME: six dials
+            for (int i = 0; i < (int) timeKnobs.size(); ++i)
+                timeKnobs[(size_t) i]->setBounds (dialIn (cellBounds (i)));
+
+            // SPACE: orbit and its settings, ghosts, the stereo field
+            orbitKnob->setBounds (dialIn (cellBounds (0)));
+            ghostKnob->setBounds (dialIn (cellBounds (2)));
+            offsetKnob->setBounds (dialIn (cellBounds (3)));
+            spreadKnob->setBounds (dialIn (cellBounds (4)));
+
             {
-                k->setBounds (x + 14, y, 74, 76);
-                x += 102;
+                const auto c = cellBounds (1);
+                orbitShapeDisplay.setBounds (c.getX() + 14, c.getY() + 4, c.getWidth() - 28, 60);
+                orbitRateKnob->setBounds (c.getX() + 26, c.getY() + 76, 68, 68);
+                orbitDivDisplay.setBounds (c.getX() + 10, c.getY() + 76, 104, 68);
+                orbitSyncSwitch.setBounds (c.getX() + 122, c.getY() + 76, 56, 68);
             }
-
-            freezeKey.setBounds (650, y + 12, 86, 46);
-            infiniteKey.setBounds (742, y + 12, 86, 46);
-
-            vuL.setBounds (852, y + 3, 112, 68);
-            vuR.setBounds (970, y + 3, 112, 68);
-            outGainKnob->setBounds (1090, y, 74, 76);
-            limiterKey.setBounds (1170, y + 14, 54, 42);
-        }
-
-        // ---- detail
-        {
-            const int y = detailPanel.getY();
-            offsetKnob->setBounds (196, y + 8, 58, 60);
-            spreadKnob->setBounds (262, y + 8, 58, 60);
-            orbitShapeDisplay.setBounds (344, y + 18, 124, 38);
-            orbitRateKnob->setBounds (480, y + 8, 62, 60);
-            orbitDivDisplay.setBounds (476, y + 18, 78, 38);
-            orbitSyncSwitch.setBounds (560, y + 5, 44, 62);
-            qualityDisplay.setBounds (W - 8 - 16 - 150, y + 18, 150, 38);
+            {
+                const auto c = cellBounds (5);
+                stereoSwitch.setBounds (c.getX() + 4, c.getY() + 10, c.getWidth() - 8, 32);
+                qualityDisplay.setBounds (c.getX() + 24, c.getY() + 82, c.getWidth() - 48, 60);
+            }
         }
     }
 
 private:
     // ------------------------------------------------------------------------
-    static juce::Rectangle<float> headerIn (juce::Rectangle<int> panel)
+    static juce::Rectangle<float> headerIn (juce::Rectangle<int> card)
     {
-        return juce::Rectangle<float> ((float) panel.getX() + 20.0f, (float) panel.getY() + 8.0f, (float) panel.getWidth() - 40.0f, 14.0f);
+        return juce::Rectangle<float> ((float) card.getX() + 18.0f, (float) card.getY() + 12.0f, (float) card.getWidth() - 36.0f, 16.0f);
     }
 
-    void addKey (KeyButton& key, const juce::String& text, juce::Colour led = col::amber)
+    /** One of the six columns of the lower card's TIME and SPACE pages. */
+    juce::Rectangle<int> cellBounds (int index) const
     {
-        key.setButtonText (text);
-        key.setLedColour (led);
-        addAndMakeVisible (key);
+        const int x0 = dockCard.getX() + 16, w = (dockCard.getWidth() - 32) / 6;
+        return { x0 + w * index, dockCard.getY() + 52, w, dockCard.getHeight() - 52 - 12 };
     }
 
-    void makeKnob (std::unique_ptr<Knob>& knob, const char* paramId, const char* legend, Knob::Size size, juce::Colour accent = col::amber)
+    static juce::Rectangle<int> dialIn (juce::Rectangle<int> cell)
     {
-        knob = std::make_unique<Knob> (apvts, paramId, legend, size, accent);
+        return { cell.getCentreX() - 52, cell.getY() + 2, 104, 112 };
+    }
+
+    void makeKnob (std::unique_ptr<Knob>& knob, const char* paramId, const char* legend, Knob::Size size, Knob::Body body = Knob::Body::light)
+    {
+        knob = std::make_unique<Knob> (apvts, paramId, legend, size, body);
         knob->setComponentID (paramId);
         knob->setTooltip (tooltipFor (paramId));
         addAndMakeVisible (*knob);
+    }
+
+    void updatePageVisibility()
+    {
+        const bool onTime = isAdvanced && page == pageTime, onSpace = isAdvanced && page == pageSpace;
+        const bool orbitSynced = pOrbitSync != nullptr && pOrbitSync->load() > 0.5f;
+
+        dockTabs.setVisible (isAdvanced);
+
+        for (auto& k : timeKnobs)
+            k->setVisible (onTime);
+
+        for (auto* c : std::initializer_list<juce::Component*> { orbitKnob.get(), ghostKnob.get(), offsetKnob.get(), spreadKnob.get(),
+                                                                 &orbitShapeDisplay, &orbitSyncSwitch, &stereoSwitch, &qualityDisplay })
+            c->setVisible (onSpace);
+
+        orbitRateKnob->setVisible (onSpace && ! orbitSynced);
+        orbitDivDisplay.setVisible (onSpace && orbitSynced);
+
+        motion.setVisible (isAdvanced && page == pageMotion);
     }
 
     /** Previous / next: within the library's current search and category while it is open,
@@ -806,7 +1134,7 @@ private:
         quality.addItem (103, "ULTRA  -  4x oversampling", true, q == 2);
 
         const double scale = proc.getUiScale();
-        size.addItem (201, "75 %",  true, std::abs (scale - 0.75) < 0.01);
+        size.addItem (201, "80 %",  true, std::abs (scale - 0.8) < 0.01);
         size.addItem (202, "100 %", true, std::abs (scale - 1.0) < 0.01);
         size.addItem (203, "125 %", true, std::abs (scale - 1.25) < 0.01);
         size.addItem (204, "150 %", true, std::abs (scale - 1.5) < 0.01);
@@ -836,7 +1164,7 @@ private:
             }
             else if (result >= 201 && result <= 204)
             {
-                static constexpr double scales[] = { 0.75, 1.0, 1.25, 1.5 };
+                static constexpr double scales[] = { 0.8, 1.0, 1.25, 1.5 };
                 self.editor.setWindowScale (scales[result - 201]);
             }
             else if (result == 1)   self.proc.presets->setMixLocked (! self.proc.presets->isMixLocked());
@@ -861,16 +1189,11 @@ private:
             shownMode = mode;
             const auto& info = modeInfo (mode);
 
-            macroA->setLegend (info.macroA);
+            macroA->setLegend (titleCase (info.macroA));
             macroA->setTooltip (juce::String (info.name) + " - " + info.macroA + ": " + info.tipA);
-            macroB->setLegend (info.macroB);
+            macroB->setLegend (titleCase (info.macroB));
             macroB->setTooltip (juce::String (info.name) + " - " + info.macroB + ": " + info.tipB);
-            modeDisplay.setTooltip (juce::String (info.name) + ": " + info.description + "\n" + tooltipFor (id::mode));
-
-            for (int f = 0; f < 3; ++f)
-                familyKeys[(size_t) f]->setToggleState ((int) info.family == f, juce::dontSendNotification);
-
-            repaint (descriptionArea);
+            modeScreen.setTooltip (juce::String (info.name) + ": " + info.description + "\n" + tooltipFor (id::mode));
         }
 
         const bool synced = pSync->load() > 0.5f;
@@ -887,8 +1210,9 @@ private:
         if (force || orbitSynced != shownOrbitSync)
         {
             shownOrbitSync = orbitSynced;
-            orbitRateKnob->setVisible (isAdvanced && ! orbitSynced);
-            orbitDivDisplay.setVisible (isAdvanced && orbitSynced);
+            const bool onSpace = isAdvanced && page == pageSpace;
+            orbitRateKnob->setVisible (onSpace && ! orbitSynced);
+            orbitDivDisplay.setVisible (onSpace && orbitSynced);
         }
 
         const auto name = proc.presets->getCurrentName();
@@ -919,28 +1243,29 @@ private:
               undoKey { "UNDO" }, redoKey { "REDO" }, viewKey { "ADVANCED" }, menuKey { "MENU" };
     PresetDisplay presetDisplay;
 
-    // delay engine
-    std::array<std::unique_ptr<KeyButton>, 3> familyKeys;
-    ChoiceDisplay modeDisplay { apvts, id::mode };
+    // engine
+    ModeScreen modeScreen { apvts };
     std::unique_ptr<Knob> timeKnob, divisionKnob, inertiaKnob, feedbackKnob, mixKnob, macroA, macroB, pingPongKnob, widthKnob;
-    LeverSwitch syncSwitch { apvts, id::sync, "SYNC" };
-    SegmentSwitch stereoSwitch { apvts, id::stereoMode, stereoModeNames() };
+    ToggleSwitch syncSwitch { apvts, id::sync, "Sync" };
 
     // character
     std::unique_ptr<Knob> saturationKnob, driveKnob, lowCutKnob, highCutKnob, resonanceKnob,
-                          diffusionKnob, modDepthKnob, pitchKnob, modRateKnob, reverseKnob, duckingKnob;
+                          diffusionKnob, modDepthKnob, modRateKnob, duckingKnob;
     ChoiceDisplay satTypeDisplay { apvts, id::satType };
     FilterScope filterScope;
 
-    // signature + output
-    std::unique_ptr<Knob> warpKnob, orbitKnob, ghostKnob, collapseKnob, randomKnob, tapeMemoryKnob, outGainKnob;
+    // under the display
+    std::unique_ptr<Knob> outGainKnob;
     KeyButton freezeKey { "FREEZE" }, infiniteKey { "INFINITE" }, limiterKey { "LIMIT" };
-    VuMeter vuL { "L" }, vuR { "R" };
+    LevelMeter meterL { "L" }, meterR { "R" };
 
-    // detail
-    std::unique_ptr<Knob> offsetKnob, spreadKnob, orbitRateKnob;
+    // lower card
+    SegmentBar dockTabs { { "TIME", "SPACE", "MOTION" } };
+    std::array<std::unique_ptr<Knob>, std::size (kTimeCells)> timeKnobs;
+    std::unique_ptr<Knob> orbitKnob, ghostKnob, offsetKnob, spreadKnob, orbitRateKnob;
     ChoiceDisplay orbitShapeDisplay { apvts, id::orbitShape }, orbitDivDisplay { apvts, id::orbitDiv }, qualityDisplay { apvts, id::quality };
-    LeverSwitch orbitSyncSwitch { apvts, id::orbitSync, "SYNC", col::cyan };
+    ToggleSwitch orbitSyncSwitch { apvts, id::orbitSync, "Sync" };
+    SegmentSwitch stereoSwitch { apvts, id::stereoMode, { "Stereo", "Mono", "Mid/Side" } };
 
     // centre and overlays
     EchoVisualizer visualizer;
@@ -953,9 +1278,10 @@ private:
     juce::Image faceplate;
     float faceplateScale = 0.0f;
     bool faceplateAdvanced = true;
+    int faceplatePage = -1;
 
-    juce::Rectangle<int> leftPanel, rightPanel, signaturePanel, detailPanel, descriptionArea;
-    int  shownMode = -1;
+    juce::Rectangle<int> leftCard, rightCard, screenCard, stripCard, dockCard;
+    int  shownMode = -1, page = 0;
     bool shownSync = false, shownOrbitSync = false, isAdvanced = true;
 };
 
@@ -980,17 +1306,7 @@ DlayAudioProcessorEditor::DlayAudioProcessorEditor (DlayAudioProcessor& p)
     setResizable (true, true);
     applyConstraints();
 
-    // open at the stored scale, but never larger than the screen allows
-    double scale = juce::jlimit (0.6, 2.0, dlayProcessor.getUiScale());
-
-    if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
-    {
-        const auto area = display->userBounds;
-        if (area.getWidth() > 0.0f && area.getHeight() > 0.0f)
-            scale = juce::jmin (scale, juce::jmax (0.6, juce::jmin ((double) area.getWidth() * 0.96 / (double) kBaseWidth,
-                                                                     (double) area.getHeight() * 0.9 / (double) baseHeight())));
-    }
-
+    const double scale = openingScale();
     setSize (juce::roundToInt (kBaseWidth * scale), juce::roundToInt (baseHeight() * scale));
 
     lastTick = juce::Time::getMillisecondCounter();
@@ -1005,6 +1321,34 @@ DlayAudioProcessorEditor::~DlayAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+/** The size to open at: the one stored with the session, or - the first time - one chosen
+    for the screen; in both cases never larger than the screen allows. */
+double DlayAudioProcessorEditor::openingScale() const
+{
+    double scale = dlayProcessor.getUiScale();
+    double fit = kMaxScale;
+
+    if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    {
+        const auto area = display->userBounds;
+
+        if (area.getWidth() > 0.0f && area.getHeight() > 0.0f)
+        {
+            // a host adds a title bar and often a toolbar of its own around the plug-in
+            fit = juce::jmin ((double) area.getWidth() * 0.96 / (double) kBaseWidth,
+                              (double) area.getHeight() * 0.93 / (double) baseHeight());
+
+            if (scale <= 0.0)       // never chosen: full size, and larger on a large screen
+                scale = juce::jlimit (1.0, 1.5, (double) area.getHeight() * 0.62 / (double) kAdvancedHeight);
+        }
+    }
+
+    if (scale <= 0.0)
+        scale = 1.0;
+
+    return juce::jlimit (kMinScale, kMaxScale, juce::jmin (scale, fit));
+}
+
 void DlayAudioProcessorEditor::applyConstraints()
 {
     const double ratio = (double) kBaseWidth / (double) baseHeight();
@@ -1012,8 +1356,8 @@ void DlayAudioProcessorEditor::applyConstraints()
     if (auto* limits = getConstrainer())
     {
         limits->setFixedAspectRatio (ratio);
-        limits->setSizeLimits (juce::roundToInt (kBaseWidth * 0.6), juce::roundToInt (baseHeight() * 0.6),
-                               kBaseWidth * 2, baseHeight() * 2);
+        limits->setSizeLimits (juce::roundToInt (kBaseWidth * kMinScale), juce::roundToInt (baseHeight() * kMinScale),
+                               juce::roundToInt (kBaseWidth * kMaxScale), juce::roundToInt (baseHeight() * kMaxScale));
     }
 }
 
@@ -1035,13 +1379,18 @@ void DlayAudioProcessorEditor::setAdvancedView (bool advanced)
 
 void DlayAudioProcessorEditor::setWindowScale (double scale)
 {
-    scale = juce::jlimit (0.6, 2.0, scale);
+    scale = juce::jlimit (kMinScale, kMaxScale, scale);
     setSize (juce::roundToInt (kBaseWidth * scale), juce::roundToInt (baseHeight() * scale));
 }
 
 void DlayAudioProcessorEditor::showPresetBrowser (bool shouldShow)
 {
     content->showBrowser (shouldShow, false);
+}
+
+void DlayAudioProcessorEditor::showPage (int pageIndex)
+{
+    content->setPage (pageIndex);
 }
 
 void DlayAudioProcessorEditor::showMotionLane (int laneIndex)
@@ -1051,7 +1400,7 @@ void DlayAudioProcessorEditor::showMotionLane (int laneIndex)
 
 void DlayAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (dlay::ui::col::bg);
+    g.fillAll (dlay::ui::col::page);
 }
 
 void DlayAudioProcessorEditor::resized()

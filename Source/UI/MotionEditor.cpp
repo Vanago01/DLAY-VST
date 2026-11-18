@@ -30,7 +30,7 @@ namespace
 
     void drawShapeIcon (juce::Graphics& g, juce::Rectangle<float> r, int index, juce::Colour colour)
     {
-        const auto box = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 22.0f), juce::jmin (r.getHeight(), 11.0f));
+        const auto box = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 24.0f), juce::jmin (r.getHeight(), 12.0f));
         const float x0 = box.getX(), w = box.getWidth(), cy = box.getCentreY(), a = box.getHeight() * 0.5f;
         juce::Path p;
 
@@ -96,7 +96,7 @@ namespace
         }
 
         g.setColour (colour);
-        g.strokePath (p, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (p, juce::PathStrokeType (1.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
 
@@ -107,11 +107,11 @@ struct MotionEditor::LaneControls
 {
     LaneControls (APVTS& s, int laneIndex)
         : shape (s, id::lane (laneIndex, id::laneShape), lfoShapeNames()),
-          depth (s, id::lane (laneIndex, id::laneDepth), "DEPTH", Knob::Size::medium),
-          rate (s, id::lane (laneIndex, id::laneRate), "RATE", Knob::Size::medium),
-          phase (s, id::lane (laneIndex, id::lanePhase), "PHASE", Knob::Size::compact, col::cream),
-          stereo (s, id::lane (laneIndex, id::laneStereo), "L/R", Knob::Size::compact, col::cyan),
-          sync (s, id::lane (laneIndex, id::laneSync), "SYNC"),
+          depth (s, id::lane (laneIndex, id::laneDepth), "Depth", Knob::Size::medium),
+          rate (s, id::lane (laneIndex, id::laneRate), "Rate", Knob::Size::medium),
+          phase (s, id::lane (laneIndex, id::lanePhase), "Phase", Knob::Size::compact),
+          stereo (s, id::lane (laneIndex, id::laneStereo), "L / R", Knob::Size::compact),
+          sync (s, id::lane (laneIndex, id::laneSync), "Sync"),
           length (s, id::lane (laneIndex, id::laneDiv))
     {
         shape.drawIcon = drawShapeIcon;
@@ -122,13 +122,12 @@ struct MotionEditor::LaneControls
         stereo.setTooltip ("Phase offset of the right channel. Above zero the left and right sides move independently.");
         sync.setTooltip ("Lock the lane length to the host tempo. While the transport runs, the lane follows the song position.");
         length.setTooltip ("Length of one pass of the lane, in note values.");
-        length.setCaption ("LENGTH");
-        length.setFontHeight (13.0f);
+        length.setCaption ("Length", Knob::Size::medium);
     }
 
     SegmentSwitch shape;
     Knob depth, rate, phase, stereo;
-    LeverSwitch sync;
+    ToggleSwitch sync;
     ChoiceDisplay length;
 };
 
@@ -226,9 +225,11 @@ public:
     // ------------------------------------------------------------------------
     void paint (juce::Graphics& g) override
     {
-        const auto b = getLocalBounds().toFloat();
-        g.fillAll (col::panel);
-        drawScreen (g, b.reduced (1.0f), 4.0f);
+        const auto b = getLocalBounds().toFloat().reduced (1.5f);
+        constexpr float corner = 14.0f;
+
+        g.fillAll (col::card);
+        drawScreen (g, b, corner);
 
         const auto p = plot();
         const int shape = currentShape();
@@ -239,163 +240,197 @@ public:
         const float cy = p.getCentreY(), amp = p.getHeight() * 0.5f;
         auto& motion = proc.engine.motion;
 
+        {
+            juce::Graphics::ScopedSaveState screenClip (g);
+            juce::Path clip;
+            clip.addRoundedRectangle (b, corner);
+            g.reduceClipRegion (clip);
+            drawStars (g, b, 0x3077u + (juce::uint32) lane * 131u, 70, 0.8f);
+        }
+
         // ---- grid
         for (int i = 0; i <= 16; ++i)
         {
             const float x = p.getX() + p.getWidth() * (float) i / 16.0f;
-            g.setColour (col::cyan.withAlpha ((i % 4) == 0 ? 0.16f : 0.06f));
-            g.drawVerticalLine (juce::roundToInt (x), p.getY(), p.getBottom());
+            g.setColour (juce::Colours::white.withAlpha ((i % 4) == 0 ? 0.13f : 0.045f));
+            g.fillRect (x - 0.5f, p.getY(), 1.0f, p.getHeight());
         }
 
         for (int i = 0; i <= 4; ++i)
         {
             const float y = p.getY() + p.getHeight() * (float) i / 4.0f;
-            g.setColour (i == 2 ? col::creamFaint.withAlpha (0.6f) : col::cyan.withAlpha (0.07f));
-            g.drawHorizontalLine (juce::roundToInt (y), p.getX(), p.getRight());
+            g.setColour (juce::Colours::white.withAlpha (i == 2 ? 0.26f : 0.05f));
+            g.fillRect (p.getX(), y - 0.5f, p.getWidth(), 1.0f);
         }
 
-        g.setFont (font (FontKind::semiBold, 8.5f, 0.16f));
-        g.setColour (col::creamFaint);
-        g.drawText (kAxisWords[lane].up, juce::Rectangle<float> (p.getX() + 4.0f, p.getY() + 2.0f, 140.0f, 9.0f), juce::Justification::centredLeft, false);
-        g.drawText (kAxisWords[lane].down, juce::Rectangle<float> (p.getX() + 4.0f, p.getBottom() - 11.0f, 140.0f, 9.0f), juce::Justification::centredLeft, false);
+        g.setFont (capsFont (9.5f));
+        g.setColour (col::starFaint);
+        g.drawText (kAxisWords[lane].up, juce::Rectangle<float> (p.getX() + 6.0f, p.getY() + 3.0f, 200.0f, 12.0f), juce::Justification::centredLeft, false);
+        g.drawText (kAxisWords[lane].down, juce::Rectangle<float> (p.getX() + 6.0f, p.getBottom() - 15.0f, 200.0f, 12.0f), juce::Justification::centredLeft, false);
 
-        g.setFont (monoFont (8.0f));
+        g.setFont (monoFont (10.0f));
         static const char* quarters[] = { "0", "1/4", "1/2", "3/4", "1" };
         for (int i = 0; i <= 4; ++i)
-            g.drawText (quarters[i], juce::Rectangle<float> (p.getX() + p.getWidth() * (float) i / 4.0f - 14.0f, p.getBottom() + 1.0f, 28.0f, 9.0f),
-                        juce::Justification::centred, false);
-
-        juce::Graphics::ScopedSaveState state (g);
-        g.reduceClipRegion (p.expanded (1.0f, 6.0f).toNearestInt());
-
-        const int n = juce::jmax (32, (int) p.getWidth() / 2);
-
-        // ---- what reaches the engine: shape x depth (filled), right channel in cyan
-        if (! randomShape && std::abs (depth) > 0.001f)
         {
-            juce::Path area, line, lineR;
-            area.startNewSubPath (p.getX(), cy);
+            const float x = p.getX() + p.getWidth() * (float) i / 4.0f;
+            const auto just = i == 0 ? juce::Justification::centredLeft : (i == 4 ? juce::Justification::centredRight : juce::Justification::centred);
+            g.drawText (quarters[i], juce::Rectangle<float> (x - 20.0f, p.getBottom() + 2.0f, 40.0f, 12.0f)
+                                         .translated (i == 0 ? 20.0f : (i == 4 ? -20.0f : 0.0f), 0.0f), just, false);
+        }
 
-            for (int i = 0; i <= n; ++i)
+        // everything that follows is the plot itself and stays inside it
+        {
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (p.expanded (1.0f, 6.0f).toNearestInt());
+
+            const int n = juce::jmax (32, (int) p.getWidth() / 2);
+
+            // ---- what reaches the engine: shape x depth (filled), right channel in purple
+            if (! randomShape && std::abs (depth) > 0.001f)
             {
-                const float t = (float) i / (float) n;
-                const float x = p.getX() + p.getWidth() * t;
-                const float v = (float) motion.evaluate (lane, shape, (double) juce::jmin (t, 0.9999f)) * depth;
-                area.lineTo (x, cy - v * amp);
-                if (i == 0) line.startNewSubPath (x, cy - v * amp); else line.lineTo (x, cy - v * amp);
+                juce::Path area, line, lineR;
+                area.startNewSubPath (p.getX(), cy);
+
+                for (int i = 0; i <= n; ++i)
+                {
+                    const float t = (float) i / (float) n;
+                    const float x = p.getX() + p.getWidth() * t;
+                    const float v = (float) motion.evaluate (lane, shape, (double) juce::jmin (t, 0.9999f)) * depth;
+                    area.lineTo (x, cy - v * amp);
+                    if (i == 0) line.startNewSubPath (x, cy - v * amp); else line.lineTo (x, cy - v * amp);
+
+                    if (stereo > 0.001f)
+                    {
+                        const float vr = (float) motion.evaluate (lane, shape, (double) t + (double) stereo) * depth;
+                        if (i == 0) lineR.startNewSubPath (x, cy - vr * amp); else lineR.lineTo (x, cy - vr * amp);
+                    }
+                }
+
+                area.lineTo (p.getRight(), cy);
+                area.closeSubPath();
+
+                g.setGradientFill (accentGradient (p, 0.20f));
+                g.fillPath (area);
+                g.setColour (col::pink.withAlpha (0.9f));
+                g.strokePath (line, juce::PathStrokeType (1.5f));
 
                 if (stereo > 0.001f)
                 {
-                    const float vr = (float) motion.evaluate (lane, shape, (double) t + (double) stereo) * depth;
-                    if (i == 0) lineR.startNewSubPath (x, cy - vr * amp); else lineR.lineTo (x, cy - vr * amp);
+                    g.setColour (col::purple.withAlpha (0.85f));
+                    g.strokePath (lineR, juce::PathStrokeType (1.2f));
                 }
             }
 
-            area.lineTo (p.getRight(), cy);
-            area.closeSubPath();
-
-            g.setColour (col::amber.withAlpha (0.16f));
-            g.fillPath (area);
-            g.setColour (col::amber.withAlpha (0.85f));
-            g.strokePath (line, juce::PathStrokeType (1.4f));
-
-            if (stereo > 0.001f)
+            // ---- the shape at full scale
+            if (! randomShape)
             {
-                g.setColour (col::cyan.withAlpha (0.7f));
-                g.strokePath (lineR, juce::PathStrokeType (1.1f));
+                juce::Path full;
+                for (int i = 0; i <= n; ++i)
+                {
+                    const float t = (float) i / (float) n;
+                    const float v = custom ? MotionCurves::evaluate (points, t) * 2.0f - 1.0f
+                                           : (float) motion.evaluate (lane, shape, (double) juce::jmin (t, 0.9999f));
+                    const juce::Point<float> pt (p.getX() + p.getWidth() * t, cy - v * amp);
+                    if (i == 0) full.startNewSubPath (pt); else full.lineTo (pt);
+                }
+
+                g.setColour (custom ? col::star.withAlpha (0.9f) : col::star.withAlpha (0.24f));
+                g.strokePath (full, juce::PathStrokeType (custom ? 1.6f : 1.0f));
             }
-        }
-
-        // ---- the shape at full scale
-        if (! randomShape)
-        {
-            juce::Path full;
-            for (int i = 0; i <= n; ++i)
+            else
             {
-                const float t = (float) i / (float) n;
-                const float v = custom ? MotionCurves::evaluate (points, t) * 2.0f - 1.0f
-                                       : (float) motion.evaluate (lane, shape, (double) juce::jmin (t, 0.9999f));
-                const juce::Point<float> pt (p.getX() + p.getWidth() * t, cy - v * amp);
-                if (i == 0) full.startNewSubPath (pt); else full.lineTo (pt);
+                g.setFont (capsFont (9.5f));
+                g.setColour (col::starFaint);
+                g.drawText (shape == (int) LfoShape::random ? "SMOOTH RANDOM  -  LIVE TRACE" : "SAMPLE & HOLD  -  LIVE TRACE",
+                            p.withTrimmedTop (p.getHeight() - 15.0f).translated (-6.0f, -3.0f), juce::Justification::centredRight, false);
             }
 
-            g.setColour (custom ? col::cream.withAlpha (0.9f) : col::cream.withAlpha (0.22f));
-            g.strokePath (full, juce::PathStrokeType (custom ? 1.5f : 1.0f));
-        }
-        else
-        {
-            g.setFont (font (FontKind::semiBold, 9.5f, 0.2f));
-            g.setColour (col::creamFaint);
-            g.drawText (shape == (int) LfoShape::random ? "SMOOTH RANDOM  -  LIVE TRACE" : "SAMPLE & HOLD  -  LIVE TRACE",
-                        p.withTrimmedTop (p.getHeight() - 14.0f).translated (0.0f, -12.0f), juce::Justification::centredRight, false);
-        }
-
-        // ---- live trace
-        const auto drawTrace = [&] (const std::array<float, 192>& trace, juce::Colour c)
-        {
-            juce::Path path;
-            bool open = false;
-            const int count = (int) trace.size();
-
-            for (int i = 0; i < count; ++i)
+            // ---- live trace
+            const auto drawTrace = [&] (const std::array<float, 192>& trace, juce::Colour c)
             {
-                const float v = trace[(size_t) i];
-                if (v <= kEmpty + 1.0f) { open = false; continue; }
+                juce::Path path;
+                bool open = false;
+                const int count = (int) trace.size();
 
-                const juce::Point<float> pt (p.getX() + p.getWidth() * ((float) i + 0.5f) / (float) count, cy - juce::jlimit (-1.0f, 1.0f, v) * amp);
-                if (! open) { path.startNewSubPath (pt); open = true; } else path.lineTo (pt);
-            }
+                for (int i = 0; i < count; ++i)
+                {
+                    const float v = trace[(size_t) i];
+                    if (v <= kEmpty + 1.0f) { open = false; continue; }
 
-            g.setColour (c.withAlpha (0.22f));
-            g.strokePath (path, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-            g.setColour (c.interpolatedWith (juce::Colours::white, 0.35f));
-            g.strokePath (path, juce::PathStrokeType (1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        };
+                    const juce::Point<float> pt (p.getX() + p.getWidth() * ((float) i + 0.5f) / (float) count, cy - juce::jlimit (-1.0f, 1.0f, v) * amp);
+                    if (! open) { path.startNewSubPath (pt); open = true; } else path.lineTo (pt);
+                }
 
-        if (std::abs (depth) > 0.001f)
-        {
-            if (stereo > 0.001f)
-                drawTrace (traceR, col::cyan);
-            drawTrace (traceL, col::amber);
-        }
-
-        // ---- beam
-        {
-            const float x = p.getX() + p.getWidth() * phase;
-            g.setColour (col::cream.withAlpha (std::abs (depth) > 0.001f ? 0.75f : 0.25f));
-            g.drawLine (x, p.getY(), x, p.getBottom(), 1.0f);
+                g.setColour (c.withAlpha (0.24f));
+                g.strokePath (path, juce::PathStrokeType (4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.setColour (c.interpolatedWith (juce::Colours::white, 0.45f));
+                g.strokePath (path, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            };
 
             if (std::abs (depth) > 0.001f)
             {
-                const float y = cy - juce::jlimit (-1.0f, 1.0f, valueL) * amp;
-                g.setGradientFill (juce::ColourGradient (col::amber.withAlpha (0.7f), x, y, col::amber.withAlpha (0.0f), x + 12.0f, y, true));
-                g.fillEllipse (x - 12.0f, y - 12.0f, 24.0f, 24.0f);
-                g.setColour (col::cream);
-                g.fillEllipse (x - 3.0f, y - 3.0f, 6.0f, 6.0f);
-
                 if (stereo > 0.001f)
+                    drawTrace (traceR, col::purple);
+                drawTrace (traceL, col::pink);
+            }
+
+            // ---- beam
+            {
+                const float x = p.getX() + p.getWidth() * phase;
+                g.setColour (col::star.withAlpha (std::abs (depth) > 0.001f ? 0.75f : 0.25f));
+                g.fillRect (x - 0.5f, p.getY(), 1.0f, p.getHeight());
+
+                if (std::abs (depth) > 0.001f)
                 {
-                    const float yr = cy - juce::jlimit (-1.0f, 1.0f, valueR) * amp;
-                    g.setColour (col::cyan);
-                    g.fillEllipse (x - 2.5f, yr - 2.5f, 5.0f, 5.0f);
+                    const float y = cy - juce::jlimit (-1.0f, 1.0f, valueL) * amp;
+                    g.setGradientFill (juce::ColourGradient (col::pink.withAlpha (0.75f), x, y, col::pink.withAlpha (0.0f), x + 14.0f, y, true));
+                    g.fillEllipse (x - 14.0f, y - 14.0f, 28.0f, 28.0f);
+                    g.setColour (col::star);
+                    g.fillEllipse (x - 3.2f, y - 3.2f, 6.4f, 6.4f);
+
+                    if (stereo > 0.001f)
+                    {
+                        const float yr = cy - juce::jlimit (-1.0f, 1.0f, valueR) * amp;
+                        g.setColour (col::purple);
+                        g.fillEllipse (x - 2.8f, yr - 2.8f, 5.6f, 5.6f);
+                    }
+                }
+            }
+
+            // ---- handles
+            if (custom)
+            {
+                for (int i = 0; i < (int) points.size(); ++i)
+                {
+                    const auto pt = toScreen (points[(size_t) i]);
+                    const bool hot = i == dragging || i == hover;
+                    const float r = hot ? 5.6f : 4.0f;
+                    g.setColour (col::space);
+                    g.fillEllipse (pt.x - r - 1.0f, pt.y - r - 1.0f, 2.0f * r + 2.0f, 2.0f * r + 2.0f);
+                    g.setColour (hot ? col::pink : col::star);
+                    g.drawEllipse (pt.x - r, pt.y - r, 2.0f * r, 2.0f * r, 1.5f);
+                    if (hot) g.fillEllipse (pt.x - 2.2f, pt.y - 2.2f, 4.4f, 4.4f);
                 }
             }
         }
 
-        // ---- handles
-        if (custom)
+        // live read-out of the lane, on top of the plot: its name and what it is doing right now
         {
-            for (int i = 0; i < (int) points.size(); ++i)
-            {
-                const auto pt = toScreen (points[(size_t) i]);
-                const bool hot = i == dragging || i == hover;
-                const float r = hot ? 5.0f : 3.6f;
-                g.setColour (col::screen);
-                g.fillEllipse (pt.x - r - 1.0f, pt.y - r - 1.0f, 2.0f * r + 2.0f, 2.0f * r + 2.0f);
-                g.setColour (hot ? col::amber : col::cream);
-                g.drawEllipse (pt.x - r, pt.y - r, 2.0f * r, 2.0f * r, 1.4f);
-                if (hot) g.fillEllipse (pt.x - 2.0f, pt.y - 2.0f, 4.0f, 4.0f);
-            }
+            const juce::String name (kLanes[(size_t) lane].name);
+            const auto value = describeValue (lane, valueL);
+            const auto nameFont = capsFont (10.5f);
+            const auto valueFont = monoFont (12.0f);
+            const float vw = textWidth (valueFont, value) + 4.0f, nw = textWidth (nameFont, name) + 10.0f;
+            const auto pill = juce::Rectangle<float> (p.getRight() - vw - nw - 24.0f, p.getY() + 2.0f, vw + nw + 22.0f, 20.0f);
+
+            g.setColour (juce::Colour (0xff120e1b).withAlpha (0.82f));
+            g.fillRoundedRectangle (pill, 10.0f);
+
+            auto r = pill.reduced (11.0f, 0.0f);
+            drawAccentText (g, name, r.removeFromLeft (nw), juce::Justification::centredLeft, nameFont);
+            g.setFont (valueFont);
+            g.setColour (col::star);
+            g.drawText (value, r, juce::Justification::centredRight, false);
         }
     }
 
@@ -546,7 +581,7 @@ private:
 
     juce::Rectangle<float> plot() const
     {
-        return getLocalBounds().toFloat().reduced (10.0f, 9.0f).withTrimmedBottom (7.0f);
+        return getLocalBounds().toFloat().reduced (14.0f, 11.0f).withTrimmedBottom (11.0f);
     }
 
     juce::Point<float> toScreen (const CurvePoint& cp) const
@@ -683,8 +718,9 @@ MotionEditor::MotionEditor (DlayAudioProcessor& p)
 
         auto& tab = tabs[(size_t) i];
         tab = std::make_unique<KeyButton> (kLanes[(size_t) i].name);
-        tab->setFontHeight (11.5f);
-        tab->setTooltip (juce::String ("MOTION lane: ") + kLanes[(size_t) i].name + ". The lamp shows how hard the lane is working right now.");
+        tab->setFontSize (11.0f);
+        tab->setDot (true);
+        tab->setTooltip (juce::String ("MOTION lane: ") + kLanes[(size_t) i].name + ". The light shows how hard the lane is working right now.");
         tab->onClick = [this, i] { setLane (i); };
         addAndMakeVisible (*tab);
     }
@@ -695,13 +731,12 @@ MotionEditor::MotionEditor (DlayAudioProcessor& p)
 
     for (auto* b : { &drawButton, &resetButton, &invertButton })
     {
-        b->setFontHeight (10.0f);
-        b->setShowLed (false);
+        b->setFontSize (11.5f);
         addAndMakeVisible (*b);
     }
 
-    drawButton.setShowLed (true);
     drawButton.setClickingTogglesState (true);
+    drawButton.setOnFill (KeyButton::OnFill::accent);
     drawButton.setTooltip ("Freehand: paint the curve directly with the mouse.");
     drawButton.onClick = [this] { curve->drawMode = drawButton.getToggleState(); };
 
@@ -764,77 +799,54 @@ void MotionEditor::tick (float)
     curve->tick();
 }
 
-void MotionEditor::paint (juce::Graphics& g)
-{
-    drawPanel (g, getLocalBounds().toFloat());
-
-    auto header = getLocalBounds().toFloat().reduced (22.0f, 0.0f).withY (8.0f).withHeight (14.0f);
-    drawSectionHeader (g, header.withRight ((float) curveArea.getRight() - 190.0f), "07", "MOTION");
-
-    // live read-out of the selected lane
-    const float v = proc.engine.motion.uiValue[(size_t) lane][0].load (std::memory_order_relaxed);
-    g.setFont (monoFont (10.0f));
-    g.setColour (col::amber);
-    g.drawText (juce::String (kLanes[(size_t) lane].name) + "  " + describeValue (lane, v),
-                juce::Rectangle<float> ((float) controlArea.getX(), 8.0f, (float) controlArea.getWidth(), 14.0f),
-                juce::Justification::centredRight, false);
-}
-
 void MotionEditor::resized()
 {
-    auto area = getLocalBounds().reduced (16, 0);
-    area.removeFromTop (28);
-    area.removeFromBottom (12);
+    constexpr int pad = 16, headerY = 12, headerH = 32, contentY = 54, controlW = 380;
 
-    tabArea = area.removeFromLeft (98);
-    area.removeFromLeft (10);
-    controlArea = area.removeFromRight (330);
-    area.removeFromRight (12);
-    curveArea = area;
+    const int right = getWidth() - pad;
+    const int contentH = getHeight() - contentY - pad;
 
+    // ---- top row: lane keys after the card's tabs, curve tools at the far right
     {
-        auto r = tabArea;
-        const int h = juce::jmin (30, r.getHeight() / kNumLanes);
-        const int gap = juce::jmax (0, (r.getHeight() - h * kNumLanes) / (kNumLanes - 1));
+        constexpr int toolW = 76, toolGap = 6;
+        int x = right - (3 * toolW + 2 * toolGap);
 
-        for (auto& tab : tabs)
+        for (auto* b : { &drawButton, &resetButton, &invertButton })
         {
-            tab->setBounds (r.removeFromTop (h));
-            r.removeFromTop (gap);
+            b->setBounds (x, headerY, toolW, headerH);
+            x += toolW + toolGap;
         }
+
+        const int first = headerInset;
+        const int room = right - (3 * toolW + 2 * toolGap) - 24 - first;
+        const int gap = 6;
+        const int tabW = juce::jlimit (60, 100, (room - gap * (kNumLanes - 1)) / kNumLanes);
+
+        for (int i = 0; i < kNumLanes; ++i)
+            tabs[(size_t) i]->setBounds (first + i * (tabW + gap), headerY, tabW, headerH);
     }
+
+    controlArea = { right - controlW, contentY, controlW, contentH };
+    curveArea   = { pad, contentY, controlArea.getX() - 16 - pad, contentH };
 
     curve->setBounds (curveArea);
-
-    {
-        // tool keys sit on the header line, right-aligned to the curve
-        auto tools = juce::Rectangle<int> (curveArea.getRight() - 174, 6, 174, 18);
-        drawButton.setBounds (tools.removeFromLeft (56));
-        tools.removeFromLeft (3);
-        resetButton.setBounds (tools.removeFromLeft (56));
-        tools.removeFromLeft (3);
-        invertButton.setBounds (tools);
-    }
 
     if (controls != nullptr)
     {
         auto r = controlArea;
-        controls->shape.setBounds (r.removeFromTop (28));
-        r.removeFromTop (12);
+        controls->shape.setBounds (r.removeFromTop (32));
 
-        auto row = r.removeFromTop (92);
-        controls->depth.setBounds (row.removeFromLeft (80).withSizeKeepingCentre (76, 84));
+        // a row of dials, their names on one line at the bottom
+        const int bottom = controlArea.getBottom() - 4;
+        const int x = controlArea.getX();
 
-        const auto rateCell = row.removeFromLeft (90);
-        controls->rate.setBounds (rateCell.withSizeKeepingCentre (76, 84));
-        controls->length.setBounds (rateCell.withSizeKeepingCentre (88, 34));
-
-        controls->sync.setBounds (row.removeFromLeft (46).withSizeKeepingCentre (44, 66));
-        row.removeFromLeft (6);
-
-        const int halfWidth = row.getWidth() / 2;
-        controls->phase.setBounds (row.removeFromLeft (halfWidth).withSizeKeepingCentre (54, 62));
-        controls->stereo.setBounds (row.withSizeKeepingCentre (54, 62));
+        controls->depth.setBounds (x, bottom - 94, 84, 94);
+        controls->rate.setBounds (x + 88, bottom - 94, 84, 94);
+        controls->length.setBounds (x + 82, bottom - 94, 96, 94);
+        // (one unit higher: the names of small dials are set in a slightly lower line)
+        controls->sync.setBounds (x + 182, bottom - 69, 56, 68);
+        controls->phase.setBounds (x + 244, bottom - 69, 68, 68);
+        controls->stereo.setBounds (x + 312, bottom - 69, 68, 68);
     }
 }
 

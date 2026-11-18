@@ -1,4 +1,4 @@
-DLAY 1.0.0 - installing
+DLAY 1.1.0 - installing
 =======================
 
 DLAY is an effect plug-in (VST3 on every system, Audio Unit on the Mac) and a standalone
@@ -50,4 +50,7 @@ FIRST STEPS
 - MIX sets how much echo you hear. FEEDBACK sets how long the echoes go on.
 - TIME is a note value while SYNC is on, and milliseconds when it is off.
 - On a send track set MIX to 100 % and switch on MENU > "Keep MIX when changing presets".
-- Hover over any control for a description. Double-click a knob to reset it.
+- Hover over any control for a description. Double-click a dial to reset it.
+- ADVANCED (top right) opens the lower panel with three pages: TIME, SPACE and MOTION.
+- Too small or too large? Drag the bottom-right corner of the window, or choose
+  MENU > Window size. DLAY remembers the size with your project.
