@@ -323,7 +323,7 @@ Run on the build machine (Linux x86_64, Ubuntu 24.04, JUCE 9.0.5):
 | `DLAY_Tests --quick` and the UI script in a Debug build | 871 checks, 0 failures, no JUCE assertions |
 | `DLAY_Tests --quick` under AddressSanitizer + UBSan (`-DDLAY_SANITIZE=address`) | no reports |
 | `DLAY_Tests --quick` under ThreadSanitizer (`-DDLAY_SANITIZE=thread`) | no reports, including a host thread restoring sessions while audio runs and the message thread reads what the editor shows |
-| `DLAY_HostCheck` | 39 checks, 0 failures: the VST3 scans, processes at 44.1 - 192 kHz, round-trips its state through the VST3 stream, and stays healthy with the editor open while audio runs on another thread and parameters move |
+| `DLAY_HostCheck` | 40 checks, 0 failures: the VST3 scans, processes at 44.1 - 192 kHz, round-trips its state through the VST3 stream, and stays healthy with the editor open while audio runs on another thread and parameters move |
 | `DLAY_UiSnapshot --interact` | 36 checks, 0 failures: tape and radar gestures, curve editing and freehand drawing, typed values, preset browsing and search, undo / redo, resizing, all 21 algorithms |
 | CPU | 1.7 - 3.2 % of one core per instance with every feature switched on (48 kHz, 512 samples, 2x oversampling, 2.1 GHz Xeon) |
 

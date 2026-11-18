@@ -12,6 +12,12 @@
 #include <cstdio>
 #include <thread>
 
+#if JUCE_MAC
+ // A command-line tool has no application object on macOS, and without one no window can
+ // be opened. JUCE creates it in its own main(); this tool has to ask for it.
+ namespace juce { extern void initialiseNSApplication(); }
+#endif
+
 namespace
 {
     int failures = 0, checks = 0;
@@ -112,7 +118,7 @@ namespace
         }
 
         std::atomic<bool> finite { true };
-        bool editorOpened = false;
+        bool editorOpened = false, finished = false;
         int editorWidth = 0, editorHeight = 0;
 
     private:
@@ -153,7 +159,7 @@ namespace
             if (tick >= 130)
             {
                 stopTimer();
-                juce::MessageManager::getInstance()->stopDispatchLoop();
+                finished = true;
             }
         }
 
@@ -169,6 +175,10 @@ namespace
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+   #if JUCE_MAC
+    juce::initialiseNSApplication();
+   #endif
 
     if (argc < 2)
     {
@@ -330,7 +340,14 @@ int main (int argc, char** argv)
 
             {
                 EditorSession session (*third);
-                juce::MessageManager::getInstance()->runDispatchLoop();
+
+                // Pumped in slices rather than with runDispatchLoop(): that one needs a running
+                // application, which a command-line tool is not on every system.
+                const auto deadline = juce::Time::getMillisecondCounter() + 60000u;
+                while (! session.finished && juce::Time::getMillisecondCounter() < deadline)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+                check (session.finished, "the editor session ran to its end");
 
                 std::printf ("  editor %d x %d\n", session.editorWidth, session.editorHeight);
                 check (session.editorOpened, "editor opens");
