@@ -45,6 +45,11 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    /** Message thread only. Applies, right now, a session state that a host handed over on
+        another thread and that is still waiting for the message loop. The loop does this by
+        itself; this is for code that cannot wait for it. */
+    void applyPendingState()                                             { handleUpdateNowIfNeeded(); }
+
     // ---- shared with the editor ---------------------------------------------
     juce::UndoManager undoManager;
     juce::AudioProcessorValueTreeState apvts;

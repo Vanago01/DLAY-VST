@@ -55,8 +55,14 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
+      # The number of jobs is named on purpose: left out, make starts every compile at
+      # once, and that exhausts the memory of a small build machine.
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: bash
+        run: |
+          jobs=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
+          echo "building with $jobs jobs"
+          cmake --build build --config Release --parallel "$jobs"
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure

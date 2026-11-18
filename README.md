@@ -39,10 +39,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 ```
 
 ```bash
-cmake --build build --config Release --parallel
+cmake --build build --config Release --parallel 4
 ```
 
-The first configure downloads JUCE 9.0.5. The plug-ins are written to
+The first configure downloads JUCE 9.0.5. Give `--parallel` a number that suits your
+machine: without one, `make` starts every compile at once and can run a small machine out
+of memory. The plug-ins are written to
 `build/DLAY_artefacts/Release/` (`VST3/DLAY.vst3`, `AU/DLAY.component` on macOS,
 `Standalone/DLAY`). Copy them to your plug-in folder, or configure with
 `-DDLAY_COPY_PLUGIN=ON` to have the build do it.

@@ -1607,188 +1607,166 @@ void testOutputStageGlides()
 }
 
 // ----------------------------------------------------------------------------
-/** Runs last: it needs the message loop. A host restores state from a thread of its own;
-    nothing may be touched there, the state must already be reported back, and the message
-    thread applies it. */
+/** A host restores a session from a thread of its own. Nothing may be touched over there,
+    the state must already be reported back, and the message thread applies it.
+
+    This thread is JUCE's message thread, and the test plays that part itself instead of
+    running the system's message loop (a command-line tool does not have one on every
+    platform): applyPendingState() is exactly what the loop calls when it gets round to it. */
 void testStateRestoreFromAnotherThread()
 {
     section ("Session restore from a thread that is not the message thread");
 
-    struct Context
-    {
-        DlayAudioProcessor source, target, overridden;
-        juce::MemoryBlock sourceBlob, otherBlob;
-        float sourceFeedback = 0.0f, defaultFeedback = 0.0f;
-        bool finished = false;
+    DlayAudioProcessor source, target, overridden;
+    juce::MemoryBlock sourceBlob, otherBlob;
 
-        std::unique_ptr<juce::Timer> reader;
-        std::thread hostThread, audioThread;
-        std::atomic<bool> audioRunning { false }, audioFinite { true };
-        std::atomic<int> audioBlocks { 0 };
-        int reads = 0;
-        double checksum = 0.0;
-    };
+    source.presets->load (source.presets->getNumFactoryPresets() / 2);
+    setParam (source, id::feedback, 77.0f);
+    setParam (source, id::time, 1234.0f);
+    source.curves->setPoints ((int) Lane::pan, { { 0.0f, 0.2f, 0.0f }, { 0.4f, 0.9f, 0.5f }, { 1.0f, 0.1f, 0.0f } });
+    source.getStateInformation (sourceBlob);
 
-    /** Reads, on the message thread, everything an open editor reads. */
-    struct Reader : juce::Timer
-    {
-        explicit Reader (Context& context) : c (context) {}
+    const float sourceFeedback  = getParam (source, id::feedback);
+    const float defaultFeedback = getParam (target, id::feedback);
 
-        void timerCallback() override
-        {
-            c.checksum += c.target.getUiAdvanced() ? 1.0 : 0.0;
-            c.checksum += c.target.getUiScale() + (double) c.target.getUiLane();
+    setParam (overridden, id::feedback, 12.0f);
+    overridden.getStateInformation (otherBlob);
+    setParam (overridden, id::feedback, 55.0f);
 
-            for (int l = 0; l < kNumLanes; ++l)
-                for (const auto& point : c.target.curves->getPoints (l))
-                    c.checksum += (double) point.y;
-
-            c.checksum += (double) c.target.presets->getCurrentName().length();
-            c.checksum += c.target.presets->isModified() ? 1.0 : 0.0;
-            c.checksum += c.target.undoManager.canUndo() ? 1.0 : 0.0;
-            c.checksum += (double) getParam (c.target, id::feedback);
-            ++c.reads;
-        }
-
-        Context& c;
-    };
-
-    auto ctx = std::make_shared<Context>();
-
-    ctx->source.presets->load (ctx->source.presets->getNumFactoryPresets() / 2);
-    setParam (ctx->source, id::feedback, 77.0f);
-    setParam (ctx->source, id::time, 1234.0f);
-    ctx->source.curves->setPoints ((int) Lane::pan, { { 0.0f, 0.2f, 0.0f }, { 0.4f, 0.9f, 0.5f }, { 1.0f, 0.1f, 0.0f } });
-    ctx->source.getStateInformation (ctx->sourceBlob);
-    ctx->sourceFeedback  = getParam (ctx->source, id::feedback);
-    ctx->defaultFeedback = getParam (ctx->target, id::feedback);
-
-    setParam (ctx->overridden, id::feedback, 12.0f);
-    ctx->overridden.getStateInformation (ctx->otherBlob);
-    setParam (ctx->overridden, id::feedback, 55.0f);
-
-    check (std::abs (ctx->sourceFeedback - ctx->defaultFeedback) > 1.0f, "test set-up: the two states differ");
+    check (juce::MessageManager::getInstance()->isThisTheMessageThread(), "test set-up: this is the message thread");
+    check (std::abs (sourceFeedback - defaultFeedback) > 1.0f, "test set-up: the two states differ");
 
     // an edit, so that there is an undo history to protect
-    ctx->target.undoManager.beginNewTransaction();
-    ctx->target.curves->setPoints ((int) Lane::mix, { { 0.0f, 0.3f, 0.0f }, { 1.0f, 0.6f, 0.0f } }, true);
-    const bool hadUndo = ctx->target.undoManager.canUndo();
+    target.undoManager.beginNewTransaction();
+    target.curves->setPoints ((int) Lane::mix, { { 0.0f, 0.3f, 0.0f }, { 1.0f, 0.6f, 0.0f } }, true);
+    const bool hadUndo = target.undoManager.canUndo();
 
-    std::thread firstCall ([ctx]
+    std::thread firstCall ([&]
     {
-        ctx->target.setStateInformation (ctx->sourceBlob.getData(), (int) ctx->sourceBlob.getSize());
-        ctx->overridden.setStateInformation (ctx->sourceBlob.getData(), (int) ctx->sourceBlob.getSize());
+        target.setStateInformation (sourceBlob.getData(), (int) sourceBlob.getSize());
+        overridden.setStateInformation (sourceBlob.getData(), (int) sourceBlob.getSize());
     });
     firstCall.join();
 
     // 1. nothing that belongs to the message thread was touched over there
-    check (std::abs (getParam (ctx->target, id::feedback) - ctx->defaultFeedback) < 1.0e-4f,
+    check (std::abs (getParam (target, id::feedback) - defaultFeedback) < 1.0e-4f,
            "the calling thread does not touch the parameter tree");
-    check (hadUndo && ctx->target.undoManager.canUndo(), "... nor the undo history");
+    check (hadUndo && target.undoManager.canUndo(), "... nor the undo history");
 
     // 2. but the host already gets the new state back when it asks
     {
         struct Access : DlayAudioProcessor { using DlayAudioProcessor::getXmlFromBinary; };
 
         juce::MemoryBlock now;
-        ctx->target.getStateInformation (now);
+        target.getStateInformation (now);
         const auto a = Access::getXmlFromBinary (now.getData(), (int) now.getSize());
-        const auto b = Access::getXmlFromBinary (ctx->sourceBlob.getData(), (int) ctx->sourceBlob.getSize());
+        const auto b = Access::getXmlFromBinary (sourceBlob.getData(), (int) sourceBlob.getSize());
         check (a != nullptr && b != nullptr && a->isEquivalentTo (b.get(), true), "the state is reported back at once, before it has been applied");
     }
 
     // 3. a restore on the message thread in the meantime supersedes the one that is waiting
-    ctx->overridden.setStateInformation (ctx->otherBlob.getData(), (int) ctx->otherBlob.getSize());
+    overridden.setStateInformation (otherBlob.getData(), (int) otherBlob.getSize());
 
-    // 4. the message thread applies it
-    juce::MessageManager::callAsync ([ctx]
+    // 4. the message thread gets round to the hand-over
+    target.applyPendingState();
+    overridden.applyPendingState();
+
+    check (std::abs (getParam (target, id::feedback) - 77.0f) < 0.01f && std::abs (getParam (target, id::time) - 1234.0f) < 0.01f,
+           "the message thread applies the restored parameters");
+
     {
-        check (std::abs (getParam (ctx->target, id::feedback) - 77.0f) < 0.01f && std::abs (getParam (ctx->target, id::time) - 1234.0f) < 0.01f,
-               "the message thread applies the restored parameters");
-
-        const auto points = ctx->target.curves->getPoints ((int) Lane::pan);
+        const auto points = target.curves->getPoints ((int) Lane::pan);
         check (points.size() == 3 && std::abs (points[1].y - 0.9f) < 1.0e-5f, "... and the MOTION curves");
-        check (ctx->target.presets->getCurrentName() == ctx->source.presets->getCurrentName(), "... and the preset name");
-        check (! ctx->target.undoManager.canUndo(), "... and clears the undo history there");
-        check (std::abs (getParam (ctx->overridden, id::feedback) - 12.0f) < 0.01f, "a later restore is not overwritten by an earlier one that was still waiting");
+    }
 
-        // 5. A host that keeps restoring from its own thread, while audio runs on another
-        //    and the message thread reads everything an open editor reads. In a normal build
-        //    this must simply survive and end on the last state; in a ThreadSanitizer build
-        //    (-DDLAY_SANITIZE=thread) it shows that the three threads never touch the same
-        //    data without an atomic or a lock in between.
-        ctx->reader = std::make_unique<Reader> (*ctx);
-        ctx->reader->startTimer (1);
+    check (target.presets->getCurrentName() == source.presets->getCurrentName(), "... and the preset name");
+    check (! target.undoManager.canUndo(), "... and clears the undo history there");
+    check (std::abs (getParam (overridden, id::feedback) - 12.0f) < 0.01f, "a later restore is not overwritten by an earlier one that was still waiting");
 
-        ctx->target.setRateAndBufferSizeDetails (48000.0, 128);
-        ctx->target.prepareToPlay (48000.0, 128);
-        ctx->audioRunning = true;
+    // 5. A host that keeps restoring from its own thread, while audio runs on another and
+    //    this thread reads everything an open editor reads. In a normal build this must
+    //    simply survive and end on the last state; in a ThreadSanitizer build
+    //    (-DDLAY_SANITIZE=thread) it shows that the three threads never touch the same data
+    //    without an atomic or a lock in between.
+    target.setRateAndBufferSizeDetails (48000.0, 128);
+    target.prepareToPlay (48000.0, 128);
 
-        ctx->audioThread = std::thread ([ctx]
+    std::atomic<bool> audioRunning { true }, audioFinite { true }, hostDone { false };
+    std::atomic<int> audioBlocks { 0 };
+
+    std::thread audioThread ([&]
+    {
+        juce::AudioBuffer<float> block (2, 128);
+        juce::MidiBuffer midi;
+        int n = 0;
+
+        while (audioRunning.load())
         {
-            juce::AudioBuffer<float> block (2, 128);
-            juce::MidiBuffer midi;
-            int n = 0;
-
-            while (ctx->audioRunning.load())
+            for (int i = 0; i < 128; ++i, ++n)
             {
-                for (int i = 0; i < 128; ++i, ++n)
-                {
-                    const float v = 0.4f * std::sin (0.031f * (float) n);
-                    block.setSample (0, i, v);
-                    block.setSample (1, i, -v);
-                }
-
-                ctx->target.processBlock (block, midi);
-
-                for (int i = 0; i < 128; ++i)
-                    if (! std::isfinite (block.getSample (0, i)) || ! std::isfinite (block.getSample (1, i)))
-                        ctx->audioFinite = false;
-
-                ++ctx->audioBlocks;
-            }
-        });
-
-        ctx->hostThread = std::thread ([ctx]
-        {
-            for (int i = 0; i < 300; ++i)
-            {
-                const auto& blob = (i % 2) == 0 ? ctx->otherBlob : ctx->sourceBlob;
-                ctx->target.setStateInformation (blob.getData(), (int) blob.getSize());
-                std::this_thread::sleep_for (std::chrono::microseconds (400));
+                const float v = 0.4f * std::sin (0.031f * (float) n);
+                block.setSample (0, i, v);
+                block.setSample (1, i, -v);
             }
 
-            juce::MessageManager::callAsync ([ctx]
-            {
-                ctx->hostThread.join();
-                ctx->audioRunning = false;
-                ctx->audioThread.join();
-                ctx->reader.reset();
+            target.processBlock (block, midi);
 
-                check (ctx->reads > 20, "the message thread kept reading while the host thread restored 300 times (" + juce::String (ctx->reads) + " reads)");
-                check (ctx->audioBlocks.load() > 20 && ctx->audioFinite.load(),
-                       "... and audio kept running through it (" + juce::String (ctx->audioBlocks.load()) + " blocks)");
-                check (std::abs (getParam (ctx->target, id::feedback) - 77.0f) < 0.01f && std::isfinite (ctx->checksum),
-                       "... and the last restore is the one in effect");
+            for (int i = 0; i < 128; ++i)
+                if (! std::isfinite (block.getSample (0, i)) || ! std::isfinite (block.getSample (1, i)))
+                    audioFinite = false;
 
-                ctx->finished = true;
-                juce::MessageManager::getInstance()->stopDispatchLoop();
-            });
-        });
+            ++audioBlocks;
+        }
     });
 
-    juce::Timer::callAfterDelay (120000, [] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
-    juce::MessageManager::getInstance()->runDispatchLoop();
+    std::thread hostThread ([&]
+    {
+        for (int i = 0; i < 300; ++i)
+        {
+            const auto& blob = (i % 2) == 0 ? otherBlob : sourceBlob;
+            target.setStateInformation (blob.getData(), (int) blob.getSize());
+            std::this_thread::sleep_for (std::chrono::microseconds (400));
+        }
 
-    if (ctx->hostThread.joinable())
-        ctx->hostThread.join();
+        hostDone = true;
+    });
 
-    ctx->audioRunning = false;
-    if (ctx->audioThread.joinable())
-        ctx->audioThread.join();
+    int reads = 0, applied = 0;
+    double checksum = 0.0;
+    float lastSeen = getParam (target, id::feedback);
 
-    ctx->reader.reset();
-    check (ctx->finished, "the message loop delivered every restore");
+    while (! hostDone.load())
+    {
+        target.applyPendingState();                     // the message loop delivering a hand-over
+
+        // what an open editor reads
+        checksum += target.getUiAdvanced() ? 1.0 : 0.0;
+        checksum += target.getUiScale() + (double) target.getUiLane();
+
+        for (int l = 0; l < kNumLanes; ++l)
+            for (const auto& point : target.curves->getPoints (l))
+                checksum += (double) point.y;
+
+        checksum += (double) target.presets->getCurrentName().length();
+        checksum += target.presets->isModified() ? 1.0 : 0.0;
+        checksum += target.undoManager.canUndo() ? 1.0 : 0.0;
+
+        const float now = getParam (target, id::feedback);
+        checksum += (double) now;
+        if (now != lastSeen) { lastSeen = now; ++applied; }
+        ++reads;
+    }
+
+    hostThread.join();
+    target.applyPendingState();
+    audioRunning = false;
+    audioThread.join();
+
+    check (reads > 20 && applied > 2,
+           "the message thread kept reading and applying while the host thread restored 300 times ("
+             + juce::String (reads) + " reads, " + juce::String (applied) + " states applied)");
+    check (audioBlocks.load() > 20 && audioFinite.load(), "... and audio kept running through it (" + juce::String (audioBlocks.load()) + " blocks)");
+    check (std::abs (getParam (target, id::feedback) - 77.0f) < 0.01f && std::isfinite (checksum), "... and the last restore is the one in effect");
 }
 
 // ============================================================================
@@ -2145,7 +2123,7 @@ int main (int argc, char** argv)
     if (! quick)
         runPerformance();
 
-    testStateRestoreFromAnotherThread();        // last: it runs the message loop
+    testStateRestoreFromAnotherThread();
 
     std::printf ("\n%d checks, %d failures\n", checks(), failures());
     return failures() == 0 ? 0 : 1;
