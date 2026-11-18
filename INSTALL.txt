@@ -36,6 +36,16 @@ LINUX
 Copy   VST3/DLAY.vst3   to   ~/.vst3/   and rescan. The standalone is   Standalone/DLAY
 
 
+UPDATING FROM AN EARLIER VERSION
+--------------------------------
+1. Close your DAW.
+2. Delete the old DLAY.vst3 from the folder named above (on the Mac also DLAY.component),
+   then copy the new one in, exactly as for a first installation.
+3. Open your DAW again; a rescan is normally not needed. Projects and presets made with
+   the earlier version open as before. The version number is shown at the top right of
+   the plug-in, next to the ADVANCED key.
+
+
 FL STUDIO
 ---------
 1. OPTIONS > Manage plugins > Find installed plugins.
