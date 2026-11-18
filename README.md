@@ -104,9 +104,11 @@ sudo apt-get install build-essential cmake ninja-build libasound2-dev libx11-dev
 | `DLAY_SANITIZE` | *(empty)* | `address` (AddressSanitizer + UBSan) or `thread` (ThreadSanitizer) for the whole build, JUCE included. For running `DLAY_Tests`, not for releases. GCC / Clang |
 
 A GitHub Actions workflow (`.github/workflows/build.yml`) builds and tests all three
-platforms on every push and offers one archive per system (plug-ins, standalone and
-`INSTALL.txt`) under the run's *Artifacts*. Pushing a tag such as `v1.0.0` also publishes
-the archives on the repository's Releases page.
+platforms on every push, loads the built plug-in in a small host on each, and makes one
+archive per system (plug-ins, standalone and `INSTALL.txt`). Every successful build of the
+main branch is published on the repository's Releases page as "DLAY - latest build". For a
+numbered release, push a tag such as `v1.0.0`, or start the workflow by hand and type the
+version number.
 
 ## Tests and tools
 
