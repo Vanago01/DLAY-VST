@@ -34,6 +34,15 @@ public:
     /** A detached copy of the MOTION tree, for presets. */
     juce::ValueTree createCopy() const;
 
+    /** The most breakpoints a lane holds: one per entry of the engine's table. The editor
+        makes a few dozen at most; a file with more has them thinned out. */
+    static constexpr int kMaxPoints = 256;
+
+    /** The MOTION element of a session or a preset file, as the tree DLAY would have made
+        of its own writing: the six lanes once each, every value a number inside its range,
+        no more points than a lane holds, and nothing else. */
+    static juce::ValueTree cleaned (const juce::XmlElement& motionXml);
+
     /** Called after the plugin state has been replaced wholesale. */
     void stateReplaced();
 

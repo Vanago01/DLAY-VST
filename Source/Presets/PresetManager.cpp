@@ -1,4 +1,5 @@
 #include "PresetManager.h"
+#include "../Params/ForeignData.h"
 
 namespace dlay
 {
@@ -12,6 +13,17 @@ namespace
     const juce::Identifier propPresetName { "presetName" };
     const juce::Identifier propPresetCat  { "presetCategory" };
     const juce::Identifier propPresetMod  { "presetModified" };
+
+    /** A preset file as XML - or nothing, if it is too big to be one. (JUCE's reader opens
+        no other file a document points to, and limits how deep elements nest and how far
+        entities expand; DlayTests checks all three.) */
+    std::unique_ptr<juce::XmlElement> parsePresetFile (const juce::File& file)
+    {
+        if (file.getSize() > foreign::kMaxBytes)
+            return {};
+
+        return juce::XmlDocument::parse (file);
+    }
 }
 
 PresetManager::PresetManager (juce::AudioProcessor& p, juce::AudioProcessorValueTreeState& state,
@@ -87,7 +99,7 @@ void PresetManager::rescan()
     {
         for (const auto& f : dir.findChildFiles (juce::File::findFiles, true, juce::String ("*") + fileExtension))
         {
-            if (auto xml = juce::XmlDocument::parse (f))
+            if (auto xml = parsePresetFile (f))
             {
                 Entry e;
                 if (readPresetXml (*xml, e, nullptr, nullptr))
@@ -174,8 +186,9 @@ void PresetManager::applyValues (const std::vector<std::pair<juce::String, float
         const auto it = lookup.find (paramId);
         const auto& range = ranged->getNormalisableRange();
 
-        const float norm = it != lookup.end() ? range.convertTo0to1 (range.snapToLegalValue (juce::jlimit (range.start, range.end, it->second)))
-                                              : ranged->getDefaultValue();
+        const float norm = it != lookup.end() && std::isfinite (it->second)
+                             ? range.convertTo0to1 (range.snapToLegalValue (juce::jlimit (range.start, range.end, it->second)))
+                             : ranged->getDefaultValue();
 
         if (std::abs (norm - ranged->getValue()) > 1.0e-7f)
         {
@@ -252,7 +265,7 @@ void PresetManager::load (int index)
     }
     else
     {
-        auto xml = juce::XmlDocument::parse (entry.file);
+        auto xml = parsePresetFile (entry.file);
         Entry info;
         std::vector<std::pair<juce::String, float>> values;
         juce::ValueTree motionTree;
@@ -319,9 +332,10 @@ bool PresetManager::readPresetXml (const juce::XmlElement& xml, Entry& info,
     if (! xml.hasTagName (presetTag))
         return false;
 
-    info.name        = xml.getStringAttribute ("name");
-    info.category    = xml.getStringAttribute ("category", userCategory);
-    info.description = xml.getStringAttribute ("description");
+    // A preset file may come from anywhere: see Params/ForeignData.h.
+    info.name        = foreign::text (xml.getStringAttribute ("name"), foreign::kMaxNameLength);
+    info.category    = foreign::text (xml.getStringAttribute ("category", userCategory), foreign::kMaxCategoryLength);
+    info.description = foreign::text (xml.getStringAttribute ("description"), foreign::kMaxDescriptionLength);
 
     if (info.category.isEmpty())
         info.category = userCategory;
@@ -329,13 +343,23 @@ bool PresetManager::readPresetXml (const juce::XmlElement& xml, Entry& info,
     if (values != nullptr)
     {
         for (auto* e : xml.getChildWithTagNameIterator ("P"))
-            values->emplace_back (e->getStringAttribute ("id"), (float) e->getDoubleAttribute ("v"));
+        {
+            if ((int) values->size() >= foreign::kMaxPresetValues)
+                break;
+
+            const auto paramId = e->getStringAttribute ("id");
+            const double value = e->getStringAttribute ("v").getDoubleValue();
+
+            // (a value that is not a number is left out: the parameter then takes its default)
+            if (paramId.length() <= 64 && e->hasAttribute ("v") && foreign::usableFloat (value))
+                values->emplace_back (paramId, (float) value);
+        }
     }
 
     if (motionTree != nullptr)
     {
         if (auto* m = xml.getChildByName (MotionCurves::motionType.toString()))
-            *motionTree = juce::ValueTree::fromXml (*m);
+            *motionTree = MotionCurves::cleaned (*m);
     }
 
     return true;
@@ -343,7 +367,7 @@ bool PresetManager::readPresetXml (const juce::XmlElement& xml, Entry& info,
 
 juce::Result PresetManager::saveUserPreset (const juce::String& name, const juce::String& category, const juce::String& description)
 {
-    const auto cleanName = name.trim();
+    const auto cleanName = foreign::text (name, foreign::kMaxNameLength);
     if (cleanName.isEmpty())
         return juce::Result::fail ("Please give the preset a name.");
 
@@ -351,9 +375,10 @@ juce::Result PresetManager::saveUserPreset (const juce::String& name, const juce
     if (! dir.isDirectory() && ! dir.createDirectory().wasOk())
         return juce::Result::fail ("Could not create the preset folder:\n" + dir.getFullPathName());
 
-    const auto cat  = category.isEmpty() ? userCategory : category;
+    const auto cleanCat = foreign::text (category, foreign::kMaxCategoryLength);
+    const auto cat  = cleanCat.isEmpty() ? userCategory : cleanCat;
     const auto file = dir.getChildFile (juce::File::createLegalFileName (cleanName) + fileExtension);
-    const auto xml  = createPresetXml (cleanName, cat, description);
+    const auto xml  = createPresetXml (cleanName, cat, foreign::text (description, foreign::kMaxDescriptionLength));
 
     if (! xml->writeTo (file))
         return juce::Result::fail ("Could not write the preset file:\n" + file.getFullPathName());
@@ -382,20 +407,53 @@ bool PresetManager::deleteUserPreset (int index)
 
 juce::Result PresetManager::importPresetFile (const juce::File& file)
 {
-    auto xml = juce::XmlDocument::parse (file);
+    auto xml = parsePresetFile (file);
     Entry info;
+    std::vector<std::pair<juce::String, float>> values;
+    juce::ValueTree motionTree;
 
-    if (xml == nullptr || ! readPresetXml (*xml, info, nullptr, nullptr))
+    if (xml == nullptr || ! readPresetXml (*xml, info, &values, &motionTree))
         return juce::Result::fail ("This is not a DLAY preset file.");
 
     const auto dir = getUserPresetDirectory();
     if (! dir.isDirectory() && ! dir.createDirectory().wasOk())
         return juce::Result::fail ("Could not create the preset folder.");
 
-    const auto target = dir.getNonexistentChildFile (file.getFileNameWithoutExtension(), fileExtension, false);
+    // What goes into the library is not the file as it came, but what DLAY read from it,
+    // written the way DLAY writes a preset: its values for parameters that exist, its
+    // curves, its three lines of text. Anything else the file held stays outside.
+    if (info.name.isEmpty())
+        info.name = foreign::text (file.getFileNameWithoutExtension(), foreign::kMaxNameLength);
 
-    if (! file.copyFileTo (target))
-        return juce::Result::fail ("Could not copy the preset into the preset folder.");
+    juce::XmlElement clean (presetTag);
+    clean.setAttribute ("version", 1);
+    clean.setAttribute ("plugin", "DLAY");
+    clean.setAttribute ("name", info.name);
+    clean.setAttribute ("category", info.category);
+    clean.setAttribute ("description", info.description);
+
+    juce::StringArray written;
+
+    for (const auto& value : values)
+    {
+        if (apvts.getParameter (value.first) == nullptr || isSessionParameter (value.first) || written.contains (value.first))
+            continue;
+
+        written.add (value.first);
+        auto* e = clean.createNewChildElement ("P");
+        e->setAttribute ("id", value.first);
+        e->setAttribute ("v", (double) value.second);
+    }
+
+    if (motionTree.isValid())
+        if (auto motionXml = motionTree.createXml())
+            clean.addChildElement (motionXml.release());
+
+    const auto baseName = juce::File::createLegalFileName (foreign::text (file.getFileNameWithoutExtension(), foreign::kMaxNameLength));
+    const auto target = dir.getNonexistentChildFile (baseName.isEmpty() ? juce::String ("Imported") : baseName, fileExtension, false);
+
+    if (! clean.writeTo (target))
+        return juce::Result::fail ("Could not write the preset into the preset folder.");
 
     rescan();
     return juce::Result::ok();
@@ -441,14 +499,22 @@ void PresetManager::loadSettings()
 {
     favourites.clear();
 
-    if (auto xml = juce::XmlDocument::parse (getSettingsFile()))
+    if (auto xml = parsePresetFile (getSettingsFile()))
     {
         if (xml->hasTagName (settingsTag))
         {
             mixLocked = xml->getBoolAttribute ("mixLock", false);
 
             for (auto* e : xml->getChildWithTagNameIterator ("FAV"))
-                favourites.addIfNotAlreadyThere (e->getStringAttribute ("key"));
+            {
+                if (favourites.size() >= foreign::kMaxFavourites)
+                    break;
+
+                const auto key = e->getStringAttribute ("key");
+
+                if (key.isNotEmpty() && key.length() <= foreign::kMaxNameLength + 2)
+                    favourites.addIfNotAlreadyThere (key);
+            }
         }
     }
 }
@@ -478,8 +544,10 @@ void PresetManager::saveToState (juce::ValueTree& state) const
 
 void PresetManager::restoreFromState (const juce::ValueTree& state)
 {
-    setCurrentNames (state.getProperty (propPresetName, "Init").toString(),
-                     state.getProperty (propPresetCat, "").toString());
+    auto name = foreign::text (state.getProperty (propPresetName, "Init").toString(), foreign::kMaxNameLength);
+
+    setCurrentNames (name.isEmpty() ? juce::String ("Init") : name,
+                     foreign::text (state.getProperty (propPresetCat, "").toString(), foreign::kMaxCategoryLength));
     currentIndex = -1;
 
     for (int i = 0; i < (int) entries.size(); ++i)

@@ -1,4 +1,4 @@
-DLAY 1.1.0 - installing
+DLAY 1.1.1 - installing
 =======================
 
 DLAY is an effect plug-in (VST3 on every system, Audio Unit on the Mac) and a standalone

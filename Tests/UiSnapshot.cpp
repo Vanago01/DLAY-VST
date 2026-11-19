@@ -222,14 +222,14 @@ namespace
             steps.push_back ([this]
             {
                 expect (proc.undoManager.canUndo(), "the gesture is undoable");
-                proc.undoManager.undo();
+                proc.undo();
             });
             wait (6);
             steps.push_back ([this]
             {
                 expect (juce::roundToInt (value (id::division)) == (int) Div::n4 && std::abs (value (id::feedback) - 45.0f) < 0.5f,
                         "undo restores time and feedback together");
-                proc.undoManager.redo();
+                proc.redo();
             });
             wait (6);
             steps.push_back ([this]
@@ -453,7 +453,7 @@ namespace
                 if (resetKey != nullptr) resetKey->onClick();
                 expect (proc.curves->getPoints ((int) Lane::speed).size() == MotionCurves::defaultCurve ((int) Lane::speed).size(),
                         "RESET restores the lane's starting curve");
-                proc.undoManager.undo();
+                proc.undo();
             });
             wait (4);
             steps.push_back ([this]

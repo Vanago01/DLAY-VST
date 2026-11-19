@@ -131,7 +131,7 @@ publishes a release that marks the source code of that version.
 
 | Tool | What it does |
 |---|---|
-| `DLAY_Tests` | Headless DSP and plug-in tests: filter and interpolator accuracy, sample-exact echo timing, block-size independence, every algorithm at 44.1 - 192 kHz, "feedback below 100 % always decays", runaway-feedback protection, loss-free freeze, pitch accuracy and pitch sweeps, resets (nothing of the old tape comes back, and what an erase costs), values that are not numbers in parameters, transport, audio and sessions, bus layouts, bypass, state recall (also from a thread that is not the message thread), and the whole preset library (each preset rendered and compared with every other). `--quick` skips the long renders, `--perf` prints the CPU cost per algorithm, `--demo <dir>` renders a short musical phrase through a selection of presets, `--render <dir>` renders every factory preset. |
+| `DLAY_Tests` | Headless DSP and plug-in tests: filter and interpolator accuracy, sample-exact echo timing, block-size independence, every algorithm at 44.1 - 192 kHz, "feedback below 100 % always decays", runaway-feedback protection, loss-free freeze, pitch accuracy and pitch sweeps, resets (nothing of the old tape comes back, and what an erase costs), values that are not numbers in parameters, transport, audio and sessions, bus layouts, bypass, state recall (also from a thread that is not the message thread), the whole preset library (each preset rendered and compared with every other), and sessions and preset files that are damaged or written to do damage (see below). `--quick` skips the long renders, `--perf` prints the CPU cost per algorithm, `--foreign <n>` runs only the damaged-data test with n sessions and n preset files, `--demo <dir>` renders a short musical phrase through a selection of presets, `--render <dir>` renders every factory preset. |
 | `DLAY_UiSnapshot <dir>` | Runs the real editor with audio flowing and writes PNG screenshots. With `--interact` it also drives the interface with simulated mouse gestures and checks the results. Needs a display; use `xvfb-run` on a headless Linux machine. |
 | `DLAY_HostCheck <DLAY.vst3>` | Loads the built VST3 through JUCE's hosting code, like a DAW: scan, parameters, processing at several rates and block sizes, state through the VST3 stream, and the editor open while audio runs on another thread. |
 
@@ -258,7 +258,7 @@ what is already there.
 Source/
   PluginProcessor.*        JUCE processor: buses, transport, state
   PluginEditor.*           window, layout, scaling, top bar
-  Params/                  parameter ids, layout, value formatting, mode tables
+  Params/                  parameter ids, layout, value formatting, mode tables, limits for data from outside
   DSP/
     DlayEngine.*           the engine (control-rate update + per-sample loop)
     DelayLine.h            circular buffer, Hermite and band-limited sinc reads
@@ -355,9 +355,9 @@ Run on the build machine (Linux x86_64, Ubuntu 24.04, JUCE 9.0.5):
 |---|---|
 | Build, GCC 13 and Clang 18 | VST3 + Standalone, no warnings from the project sources |
 | Clean checkout build | `cmake -S . -B build` (fetching JUCE), build, `ctest`: passes |
-| `DLAY_Tests` (release) | 2184 checks, 0 failures |
-| `DLAY_Tests --quick` and the UI script in a Debug build | 872 and 48 checks, 0 failures, no JUCE assertions |
-| `DLAY_Tests --quick` and the UI script under AddressSanitizer + UBSan (`-DDLAY_SANITIZE=address`) | no reports |
+| `DLAY_Tests` (release) | 2344 checks, 0 failures |
+| `DLAY_Tests --quick` and the UI script in a Debug build | 1032 and 48 checks, 0 failures, no JUCE assertions |
+| `DLAY_Tests --quick`, `DLAY_Tests --foreign 12000` and the UI script under AddressSanitizer + UBSan (`-DDLAY_SANITIZE=address`) | no reports |
 | `DLAY_Tests --quick` under ThreadSanitizer (`-DDLAY_SANITIZE=thread`) | no reports, including a host thread restoring sessions while audio runs and the message thread reads what the editor shows |
 | `DLAY_HostCheck` | 40 checks, 0 failures: the VST3 scans, processes at 44.1 - 192 kHz, round-trips its state through the VST3 stream, and stays healthy with the editor open while audio runs on another thread and parameters move |
 | `DLAY_UiSnapshot --interact` | 48 checks, 0 failures: tape and radar gestures, the algorithm screen (families, arrows, dots), the pages of the lower card, curve editing and freehand drawing, typed values, preset browsing and search (also in the compact view), undo / redo, resizing, all 21 algorithms |
@@ -402,17 +402,48 @@ The new tests also found something nobody had reported: the tape saturation curv
 returned 1e-17 instead of zero for silent input (the compiler and the maths library
 disagreed on the last bit of one constant). It is now exactly zero.
 
+### Sessions and preset files from somewhere else
+
+DLAY reads two kinds of data it did not write itself: the session state a host hands back,
+which comes out of a project file, and preset files, which people pass around. For version
+1.1.1 a randomised test was written for both (`DLAY_Tests --foreign <n>`). It damages a real
+session and a real preset file in thousands of ways and adds files written to do damage.
+It found three faults. None of them needs more than a text editor to set off:
+
+| Finding | What changed | Before -> after |
+|---|---|---|
+| A session with `value="nan"` put a value that is not a number into a parameter. It stayed there and was written into the next save; the interface uses several parameters to pick an entry from a list | A session is rebuilt from the parts DLAY knows before any of it is used (`Params/ForeignData.h`, `DlayAudioProcessor::cleanedState`). A value that is not a number means the default | all 84 parameters reading "nan": not-a-number in the plug-in -> every parameter at its default, and the interface opens and paints |
+| A MOTION curve could have any number of points | At most 256 a lane, one per entry of the engine's table. A longer curve is thinned out and keeps its shape | 300,000 points: 0.9 s to load, and 9 MB in every later save -> refused in 1 ms. 9,000 points: thinned to 256 in 14 ms |
+| Text and unknown content of any size was kept, shown and written back | A session or a preset file is at most 512 kB, names and descriptions have a length, unknown content is dropped, and an imported preset is stored as DLAY writes one, not as it came | a name of 8 million characters: 7.8 MB in every later save (15.6 MB by way of a preset) -> 5 kB |
+
+The same test establishes three things that are JUCE's doing, so that a change of JUCE
+version cannot quietly undo them: a preset file cannot make the plug-in open another file
+(external DTDs and entities are not read), text cannot multiply itself (entity expansion is
+limited), and elements nested 100,000 deep are refused instead of exhausting the stack.
+
+Under AddressSanitizer and UBSan, 12,000 damaged sessions and 12,000 damaged preset files
+produce no report.
+
+Version 1.1.1 also corrects UNDO. A parameter change is written into the undo history by a
+timer, up to half a second after it was made, and an UNDO pressed sooner than that took
+back the step before it. The UNDO and REDO keys now write what is waiting first. (The
+interface script showed it: two of its checks failed in a Debug build, where the timing
+happens to fall that way.)
+
 What has **not** been done, and should be before a release:
 
 - **Listening.** Everything above is measured, not heard. The presets were tuned against
   the engine's behaviour and level measurements; they need ears.
 - **Real DAWs.** On Windows, macOS and Linux the plug-in has been loaded by JUCE's own
-  hosting code (scan, processing, state, editor), not by a commercial DAW. The AU has not
-  been through `auval`, and [pluginval](https://github.com/Tracktion/pluginval) has not
-  been run; both belong in a release gate.
-- **Mac distribution.** The Mac builds carry an ad-hoc signature only. On another person's
-  Mac they have to be released from quarantine by hand (see `INSTALL.txt`); to hand them
-  out properly they need a Developer ID signature and Apple's notarisation.
+  hosting code (scan, processing, state, editor), and the installed Audio Unit passes
+  Apple's `auval` on both kinds of Mac. It has not been run in a commercial DAW by its
+  authors, and [pluginval](https://github.com/Tracktion/pluginval) has not been run; both
+  belong in a release gate.
+- **Signatures.** The installers are not signed by a registered developer. Browsers,
+  Windows and macOS each ask once whether the download is wanted (see `INSTALL.txt`), and a
+  Windows PC with Smart App Control switched on may refuse the installer altogether. A
+  code-signing certificate for Windows, and a Developer ID signature with Apple's
+  notarisation for the Mac, remove that.
 
 ## Licence
 

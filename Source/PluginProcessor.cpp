@@ -205,12 +205,24 @@ void DlayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     it over. */
 void DlayAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
+    // A session of DLAY is a few kilobytes of text behind the eight bytes copyXmlToBinary()
+    // puts in front. What is far bigger, or is not text, is not one, whatever it says.
+    if (data == nullptr || sizeInBytes <= 8 || sizeInBytes > dlay::foreign::kMaxBytes)
+        return;
+
+    const auto* bytes = static_cast<const char*> (data);
+    const int statedLength = (int) juce::ByteOrder::littleEndianInt (bytes + 4);
+    const int textLength   = juce::jmin (sizeInBytes - 8, statedLength);
+
+    if (textLength <= 0 || ! juce::CharPointer_UTF8::isValidString (bytes + 8, textLength))
+        return;
+
     const auto xml = getXmlFromBinary (data, sizeInBytes);
 
     if (xml == nullptr || ! xml->hasTagName (stateType))
         return;
 
-    auto tree = juce::ValueTree::fromXml (*xml);
+    auto tree = cleanedState (*xml);
     if (! tree.isValid())
         return;
 
@@ -252,9 +264,104 @@ void DlayAudioProcessor::handleAsyncUpdate()
         applyState (tree);
 }
 
+/*  The host got this state out of a project file, and a project file can be damaged, or
+    come from someone else. Nothing of it is used as it is. What goes on:
+
+      - the parameters DLAY has, once each. A value that is not a number is left out, and
+        the parameter then takes its default. (The text "nan" parses as a float. It would
+        pass every range check, sit in the parameter, and be written into the next save.)
+      - the MOTION curves, as MotionCurves::cleaned() rebuilds them
+      - the settings of the editor, inside their ranges
+      - other small properties, a limited number: a newer DLAY may have written them
+
+    Everything else is dropped here, so it is not carried into the next save either. */
+juce::ValueTree DlayAudioProcessor::cleanedState (const juce::XmlElement& fromHost) const
+{
+    namespace foreign = dlay::foreign;
+
+    if (! fromHost.hasTagName (stateType))
+        return {};
+
+    juce::ValueTree out (stateType);
+
+    // ---- settings beside the parameters
+    const auto number = [&fromHost] (const char* name, double lowest, double highest, double& result)
+    {
+        if (! fromHost.hasAttribute (name))
+            return false;
+
+        const auto text = fromHost.getStringAttribute (name).trim();
+        const double v = text.getDoubleValue();
+
+        if (text.isEmpty() || text.length() > 32 || ! std::isfinite (v) || v < lowest || v > highest)
+            return false;
+
+        result = v;
+        return true;
+    };
+
+    double v = 0.0;
+    if (number ("uiZoom", 0.0, 4.0, v))                             out.setProperty ("uiZoom", v, nullptr);
+    if (number ("uiPage", 0.0, 15.0, v))                            out.setProperty ("uiPage", juce::roundToInt (v), nullptr);
+    if (number ("uiLane", 0.0, (double) dlay::kNumLanes - 1.0, v))  out.setProperty ("uiLane", juce::roundToInt (v), nullptr);
+    if (number ("uiAdvanced", 0.0, 1.0, v))                         out.setProperty ("uiAdvanced", v >= 0.5, nullptr);
+
+    for (int i = 0; i < fromHost.getNumAttributes() && out.getNumProperties() < foreign::kMaxProperties; ++i)
+    {
+        const auto& name = fromHost.getAttributeName (i);
+
+        if (name.startsWith ("ui") || name.length() > 64 || ! juce::XmlElement::isValidXmlName (name) || out.hasProperty (name))
+            continue;                                           // (handled above, or left out there)
+
+        const auto& text = fromHost.getAttributeValue (i);
+
+        if (text.length() <= foreign::kMaxPropertyLength)
+            out.setProperty (name, foreign::text (text, foreign::kMaxPropertyLength), nullptr);
+    }
+
+    // ---- parameters and curves (the names are the ones AudioProcessorValueTreeState uses)
+    juce::StringArray seen;
+
+    for (auto* child : fromHost.getChildIterator())
+    {
+        if (child->hasTagName ("PARAM"))
+        {
+            const auto paramId = child->getStringAttribute ("id");
+
+            if (paramId.length() > 64 || apvts.getParameter (paramId) == nullptr || seen.contains (paramId))
+                continue;
+
+            seen.add (paramId);
+
+            juce::ValueTree param ("PARAM");
+            param.setProperty ("id", paramId, nullptr);
+
+            const double value = child->getStringAttribute ("value").getDoubleValue();
+
+            if (child->hasAttribute ("value") && foreign::usableFloat (value))
+                param.setProperty ("value", value, nullptr);
+
+            out.appendChild (param, nullptr);
+        }
+        else if (child->hasTagName (dlay::MotionCurves::motionType.toString())
+                  && ! out.getChildWithName (dlay::MotionCurves::motionType).isValid())
+        {
+            out.appendChild (dlay::MotionCurves::cleaned (*child), nullptr);
+        }
+    }
+
+    return out;
+}
+
 void DlayAudioProcessor::applyState (const juce::ValueTree& tree)
 {
     apvts.replaceState (tree);                          // also clears the undo history
+
+    // (cleanedState() lets no such value through; this is the second lock on the door)
+    for (auto* param : getParameters())
+        if (! std::isfinite (param->getValue()))
+            param->setValueNotifyingHost (param->getDefaultValue());
+
     curves->stateReplaced();
     presets->restoreFromState (apvts.state);
     undoManager.clearUndoHistory();

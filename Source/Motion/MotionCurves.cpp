@@ -24,6 +24,23 @@ namespace
     {
         return { usable (p.x, 0.0f, 1.0f, 0.0f), usable (p.y, 0.0f, 1.0f, 0.5f), usable (p.curve, -1.0f, 1.0f, 0.0f) };
     }
+
+    /** No more points than a lane holds: the first, the last, and the others evenly between. */
+    void thinOut (std::vector<CurvePoint>& points)
+    {
+        const size_t n = points.size(), keep = (size_t) MotionCurves::kMaxPoints;
+
+        if (n <= keep)
+            return;
+
+        std::vector<CurvePoint> fewer;
+        fewer.reserve (keep);
+
+        for (size_t i = 0; i < keep; ++i)
+            fewer.push_back (points[i * (n - 1) / (keep - 1)]);
+
+        points = std::move (fewer);
+    }
 }
 
 MotionCurves::MotionCurves (juce::ValueTree& stateRoot, juce::UndoManager* undo, MotionEngine& engine)
@@ -138,10 +155,13 @@ std::vector<CurvePoint> MotionCurves::getPoints (int lane) const
         return defaultCurve (lane);
 
     std::vector<CurvePoint> points;
-    points.reserve ((size_t) laneTree.getNumChildren());
+    points.reserve ((size_t) juce::jmin (kMaxPoints, laneTree.getNumChildren()));
 
     for (const auto& pt : laneTree)
     {
+        if ((int) points.size() >= kMaxPoints)
+            break;                                  // (cannot be: every way in thins the points out)
+
         CurvePoint p;
         p.x     = usable ((float) pt.getProperty (propX, 0.0f), 0.0f, 1.0f, 0.0f);
         p.y     = usable ((float) pt.getProperty (propY, 0.5f), 0.0f, 1.0f, 0.5f);
@@ -153,10 +173,13 @@ std::vector<CurvePoint> MotionCurves::getPoints (int lane) const
     return points;
 }
 
-void MotionCurves::setPoints (int lane, const std::vector<CurvePoint>& points, bool undoable)
+void MotionCurves::setPoints (int lane, const std::vector<CurvePoint>& given, bool undoable)
 {
     auto* um = undoable ? undoManager : nullptr;
     auto laneTree = getLaneTree (lane, true);
+
+    auto points = given;
+    thinOut (points);
 
     ++suspend;
     laneTree.removeAllChildren (um);
@@ -174,6 +197,59 @@ void MotionCurves::setPoints (int lane, const std::vector<CurvePoint>& points, b
 
     --suspend;
     rasterise (lane);
+}
+
+juce::ValueTree MotionCurves::cleaned (const juce::XmlElement& motionXml)
+{
+    juce::ValueTree out (motionType);
+
+    if (! motionXml.hasTagName (motionType.toString()))
+        return out;
+
+    // a number as the file gives it: text, which may read "nan", "inf" or 1e308
+    const auto number = [] (const juce::XmlElement& e, const juce::Identifier& name, float fallback)
+    {
+        if (! e.hasAttribute (name.toString()))
+            return fallback;
+
+        const double v = e.getStringAttribute (name.toString()).getDoubleValue();
+        return std::isfinite (v) && std::abs (v) <= 1.0e6 ? (float) v : std::numeric_limits<float>::quiet_NaN();
+    };
+
+    for (int l = 0; l < kNumLanes; ++l)
+    {
+        const juce::XmlElement* laneXml = nullptr;
+
+        for (auto* e : motionXml.getChildWithTagNameIterator (laneType.toString()))
+            if (laneXml == nullptr && e->getStringAttribute (propLane.toString()).trim() == juce::String (l))
+                laneXml = e;
+
+        if (laneXml == nullptr)
+            continue;                               // (the lane then has its default curve)
+
+        std::vector<CurvePoint> points;
+
+        for (auto* pt : laneXml->getChildWithTagNameIterator (pointType.toString()))
+            points.push_back (usable (CurvePoint { number (*pt, propX, 0.0f), number (*pt, propY, 0.5f), number (*pt, propCurve, 0.0f) }));
+
+        thinOut (points);
+
+        juce::ValueTree lane (laneType);
+        lane.setProperty (propLane, l, nullptr);
+
+        for (const auto& p : points)
+        {
+            juce::ValueTree pt (pointType);
+            pt.setProperty (propX, p.x, nullptr);
+            pt.setProperty (propY, p.y, nullptr);
+            pt.setProperty (propCurve, p.curve, nullptr);
+            lane.appendChild (pt, nullptr);
+        }
+
+        out.appendChild (lane, nullptr);
+    }
+
+    return out;
 }
 
 void MotionCurves::restoreFrom (const juce::ValueTree& motionTree, bool undoable)

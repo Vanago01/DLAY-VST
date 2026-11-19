@@ -4,6 +4,7 @@
 
 #include "DSP/DlayEngine.h"
 #include "Params/Parameters.h"
+#include "Params/ForeignData.h"
 #include "Motion/MotionCurves.h"
 #include "Presets/PresetManager.h"
 
@@ -50,6 +51,13 @@ public:
         itself; this is for code that cannot wait for it. */
     void applyPendingState()                                             { handleUpdateNowIfNeeded(); }
 
+    /** UNDO and REDO, as the keys of the editor do them. A parameter change is written into
+        the undo history by a timer, up to half a second after it was made. Taken back
+        sooner than that, the step before it would go instead - so what is still waiting is
+        written first. Message thread. */
+    void undo()                                                          { flushParameterChanges(); undoManager.undo(); }
+    void redo()                                                          { flushParameterChanges(); undoManager.redo(); }
+
     // ---- shared with the editor ---------------------------------------------
     juce::UndoManager undoManager;
     juce::AudioProcessorValueTreeState apvts;
@@ -73,6 +81,14 @@ private:
     /** Makes a restored session state the current one. Message thread only (or the
         calling thread, in a process that has no message thread). */
     void applyState (const juce::ValueTree& tree);
+
+    /** Writes parameter changes that have not reached the state tree yet into it (and with
+        that into the current undo step). copyState() is the one public way to ask for it. */
+    void flushParameterChanges()                                         { const auto written = apvts.copyState(); juce::ignoreUnused (written); }
+
+    /** The session state a host handed over, as the tree DLAY would have made of its own
+        writing - see Params/ForeignData.h. Any thread. */
+    juce::ValueTree cleanedState (const juce::XmlElement& fromHost) const;
     void handleAsyncUpdate() override;
 
     dlay::ParamCache cache;

@@ -581,13 +581,13 @@ public:
         undoKey.setLook (Look::round);
         undoKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconCurvedArrow (g, r, c, false); };
         undoKey.setTooltip ("Undo");
-        undoKey.onClick = [this] { proc.undoManager.undo(); };
+        undoKey.onClick = [this] { proc.undo(); };
 
         addAndMakeVisible (redoKey);
         redoKey.setLook (Look::round);
         redoKey.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) { iconCurvedArrow (g, r, c, true); };
         redoKey.setTooltip ("Redo");
-        redoKey.onClick = [this] { proc.undoManager.redo(); };
+        redoKey.onClick = [this] { proc.redo(); };
 
         addAndMakeVisible (viewKey);
         viewKey.setTooltip ("Show or hide the lower panel with the TIME, SPACE and MOTION pages.");

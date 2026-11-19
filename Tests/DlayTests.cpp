@@ -4,6 +4,7 @@
 //   DLAY_Tests --verbose       ... and print the level of every preset
 //   DLAY_Tests --quick         skip the long renders (for Debug builds: the point there is the assertions)
 //   DLAY_Tests --perf          print the CPU cost of every algorithm
+//   DLAY_Tests --foreign <n>   only the damaged-data test, with n damaged sessions and n damaged presets
 //   DLAY_Tests --render <dir>  render every factory preset to a WAV file (test pings)
 //   DLAY_Tests --demo <dir> [--presets "Name A,Name B"]
 //                              render a short musical phrase through a selection of presets
@@ -1950,6 +1951,567 @@ void testPresets (bool verbose, bool quick)
 }
 
 // ============================================================================
+//  Data the plug-in did not write itself. There are two kinds: the session state a host
+//  hands back, and preset files that people pass around. Neither may crash the plug-in,
+//  stall it, make it read another file, or leave a value in it that is not a usable number.
+// ============================================================================
+void testForeignData (int rounds)
+{
+    section ("Session and preset data that is damaged, or written to do damage");
+
+    struct Access : DlayAudioProcessor
+    {
+        using DlayAudioProcessor::getXmlFromBinary;
+    };
+
+    const double sr = 48000.0;
+    dlay::Rng rng;
+    rng.seed (20261119u);
+    const auto pick = [&rng] (int n) { return n <= 1 ? 0 : (int) (rng.nextU32() % (uint32_t) n); };
+    const auto now  = [] { return juce::Time::getMillisecondCounterHiRes(); };
+
+    // text that numbers, names and paths are replaced with
+    const juce::StringArray hostile { "nan", "-nan", "inf", "-inf", "1e308", "-1e308", "1e-320", "1e99999", "", " ", "abc",
+                                      "0x7fffffff", "99999999999999999999999999", "-0", "1.#QNAN", "true", "&undefined;",
+                                      "../../../../etc/passwd", "\\\\host\\share\\x", "%s%s%s%n", "]]>", "&#0;", "&#x110000;",
+                                      juce::String::repeatedString ("A", 70000), juce::String::repeatedString ("9", 400) };
+
+    // one edit to a piece of XML text: the result is sometimes still XML and often not
+    const auto mutate = [&] (std::string text)
+    {
+        const int edits = 1 + pick (4);
+
+        for (int e = 0; e < edits && ! text.empty(); ++e)
+        {
+            const size_t at = (size_t) pick ((int) text.size());
+
+            switch (pick (9))
+            {
+                case 0:  text[at] = (char) pick (256); break;                                           // any byte
+                case 1:  text[at] = "<>&\"'=/ \t\n"[pick (10)]; break;                                  // a byte that means something
+                case 2:  text.resize (at); break;                                                       // cut off
+                case 3:  text.insert (at, text.substr ((size_t) pick ((int) text.size()), (size_t) pick (400))); break;   // a piece twice
+                case 4:  text.erase (at, (size_t) pick (200)); break;                                   // a piece missing
+                case 5:                                                                                  // a value replaced
+                case 6:
+                {
+                    const auto open = text.find ("=\"", at);
+                    const auto close = open == std::string::npos ? open : text.find ('"', open + 2);
+                    if (close != std::string::npos)
+                        text.replace (open + 2, close - open - 2, hostile[pick (hostile.size())].toStdString());
+                    break;
+                }
+                case 7:                                                                                  // an element many times
+                {
+                    const auto open = text.find ('<', at);
+                    const auto close = open == std::string::npos ? open : text.find ('>', open);
+                    if (close != std::string::npos && close - open < 400)
+                    {
+                        const auto element = text.substr (open, close - open + 1);
+                        std::string many;
+                        for (int i = 1 + pick (3000); --i >= 0;) many += element;
+                        text.insert (open, many);
+                    }
+                    break;
+                }
+                default: text.insert (at, std::string ((size_t) pick (64), (char) pick (256))); break;  // noise
+            }
+        }
+
+        return text;
+    };
+
+    // a session as a host stores it: an 8-byte header, then the text
+    const auto asSession = [] (const std::string& text, int statedLength)
+    {
+        juce::MemoryBlock block;
+        juce::MemoryOutputStream out (block, false);
+        out.writeInt (0x21324356);
+        out.writeInt (statedLength);
+        out.write (text.data(), text.size());
+        out.writeByte (0);
+        out.flush();
+        return block;
+    };
+
+    // everything the plug-in holds is a usable number, and it plays
+    juce::AudioBuffer<float> block (2, 256);
+    juce::MidiBuffer midi;
+
+    const auto healthy = [&] (DlayAudioProcessor& proc) -> juce::String
+    {
+        for (auto* param : proc.getParameters())
+        {
+            const float v = param->getValue();
+            if (! (v >= 0.0f && v <= 1.0f))
+                return "parameter " + param->getName (40) + " = " + juce::String (v);
+        }
+
+        for (int l = 0; l < kNumLanes; ++l)
+        {
+            for (const auto& pt : proc.curves->getPoints (l))
+                if (! (pt.x >= 0.0f && pt.x <= 1.0f && pt.y >= 0.0f && pt.y <= 1.0f && pt.curve >= -1.0f && pt.curve <= 1.0f))
+                    return "a curve point of lane " + juce::String (l);
+
+            for (int i = 0; i < MotionEngine::kTableSize; i += 17)
+                if (! (std::abs (proc.engine.motion.tableValue (l, i)) <= 1.0f))
+                    return "the curve table of lane " + juce::String (l);
+        }
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < block.getNumSamples(); ++i)
+                block.setSample (ch, i, 0.4f * std::sin (0.05f * (float) i * (float) (ch + 1)));
+
+        proc.processBlock (block, midi);
+
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < block.getNumSamples(); ++i)
+                if (! std::isfinite (block.getSample (ch, i)))
+                    return "the audio output";
+
+        return {};
+    };
+
+    // ------------------------------------------------------------------ sessions
+    DlayAudioProcessor proc;
+    proc.setRateAndBufferSizeDetails (sr, 256);
+    proc.prepareToPlay (sr, 256);
+
+    std::string sessionText;
+    {
+        DlayAudioProcessor source;
+
+        for (auto* param : source.getParameters())
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+                ranged->setValueNotifyingHost (ranged->convertTo0to1 (ranged->convertFrom0to1 ((float) rng.next01())));
+
+        for (int l = 0; l < kNumLanes; ++l)
+            source.curves->setPoints (l, { { 0.0f, 0.2f, 0.3f }, { 0.3f, 0.9f, -0.6f }, { 0.7f, 0.1f, 0.0f }, { 1.0f, 0.6f, 0.0f } });
+
+        juce::MemoryBlock blob;
+        source.getStateInformation (blob);
+
+        if (const auto xml = Access::getXmlFromBinary (blob.getData(), (int) blob.getSize()))
+            sessionText = xml->toString (juce::XmlElement::TextFormat().singleLine()).toStdString();
+    }
+
+    check (sessionText.size() > 2000, "test set-up: a full session to damage (" + juce::String ((int) sessionText.size()) + " characters)");
+
+    {
+        juce::String firstProblem;
+        int taken = 0;
+        const double start = now();
+
+        for (int round = 0; round < rounds && firstProblem.isEmpty(); ++round)
+        {
+            const auto text = mutate (sessionText);
+            const int stated = pick (8) == 0 ? (pick (2) == 0 ? -1 - pick (1000) : std::numeric_limits<int>::max() - pick (1000))
+                                             : (int) text.size();
+            const auto data = asSession (text, stated);
+
+            // also handed over short, as a host with a damaged project file would
+            const int size = pick (6) == 0 ? pick ((int) data.getSize() + 1) : (int) data.getSize();
+            proc.setStateInformation (data.getData(), size);
+
+            // (counted the way the plug-in looks at it: is it text, then: is it XML)
+            const int textBytes = juce::jmin (size - 8, stated);
+
+            if (size > 8 && textBytes > 0
+                 && juce::CharPointer_UTF8::isValidString (static_cast<const char*> (data.getData()) + 8, textBytes)
+                 && Access::getXmlFromBinary (data.getData(), size) != nullptr)
+                ++taken;
+
+            const auto problem = healthy (proc);
+            if (problem.isNotEmpty())
+                firstProblem = "round " + juce::String (round) + ": " + problem;
+        }
+
+        std::printf ("  %d damaged sessions in %.1f s; %d of them were still readable as XML\n", rounds, (now() - start) / 1000.0, taken);
+        check (firstProblem.isEmpty(), "after every damaged session all values are usable numbers and audio comes out (" + firstProblem + ")");
+        check (firstProblem.isNotEmpty() || taken > rounds / 20,
+               "test set-up: a fair share of the damaged sessions gets past the XML reader (" + juce::String (taken) + ")");
+    }
+
+    // ------------------------------------------------------------------ every value replaced at once
+    // The interface is opened on each of these as well: it reads the same parameters, and
+    // uses several of them to pick an entry from a list.
+    const auto opensAndPaints = [] (DlayAudioProcessor& p) -> bool
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> editor (p.createEditorAndMakeActive());
+
+        if (editor == nullptr)
+            return false;
+
+        editor->setVisible (true);
+        const auto picture = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
+        const bool ok = picture.isValid() && picture.getWidth() >= 600 && picture.getHeight() >= 300;
+
+        p.editorBeingDeleted (editor.get());
+        editor.reset();
+        return ok;
+    };
+
+    {
+        const auto withEveryValue = [&] (const std::string& value)
+        {
+            auto text = sessionText;
+
+            for (size_t at = text.find (" value=\""); at != std::string::npos; at = text.find (" value=\"", at + 1))
+            {
+                const auto end = text.find ('"', at + 8);
+                text.replace (at + 8, end - at - 8, value);
+            }
+
+            return text;
+        };
+
+        check (withEveryValue ("nan") != sessionText, "test set-up: the parameter values of a session can be replaced");
+
+        // the defaults, to compare with
+        DlayAudioProcessor fresh;
+        fresh.presets->loadInit();
+        std::map<juce::String, float> defaults;
+        for (auto* param : fresh.getParameters())
+            if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+                defaults[ranged->getParameterID()] = ranged->getDefaultValue();
+
+        for (const char* value : { "nan", "-nan", "inf", "-inf", "1e308", "-1e308", "abc", "" })
+        {
+            const auto text = withEveryValue (value);
+            const auto data = asSession (text, (int) text.size());
+            proc.setStateInformation (data.getData(), (int) data.getSize());
+
+            const auto problem = healthy (proc);
+            check (problem.isEmpty(), juce::String ("a session in which every value reads \"") + value + "\" leaves usable numbers and audio (" + problem + ")");
+            check (opensAndPaints (proc), juce::String ("... and the interface opens and paints on it"));
+
+            // what is not a number at all must end at the default, not at whatever was there before
+            if (juce::String (value).containsIgnoreCase ("nan") || juce::String (value).containsIgnoreCase ("inf") || juce::String (value).contains ("e308"))
+            {
+                bool atDefault = true;
+                for (auto* param : proc.getParameters())
+                    if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param))
+                        atDefault = atDefault && std::abs (ranged->getValue() - defaults[ranged->getParameterID()]) < 1.0e-5f;
+
+                check (atDefault, juce::String ("... and every parameter is at its default after \"") + value + "\"");
+            }
+        }
+
+        // the settings of the editor, out of range and not numbers
+        for (const char* value : { "nan", "-5", "999999999999", "1e308", "abc" })
+        {
+            auto text = sessionText;
+            const auto root = text.find ("<DLAY");
+            text.insert (root + 5, std::string (" uiZoom=\"") + value + "\" uiPage=\"" + value + "\" uiLane=\"" + value + "\" uiAdvanced=\"" + value + "\"");
+            const auto data = asSession (text, (int) text.size());
+            proc.setStateInformation (data.getData(), (int) data.getSize());
+
+            const double zoom = proc.getUiScale();
+            check (std::isfinite (zoom) && zoom >= 0.0 && zoom <= 4.0 && proc.getUiPage() >= 0 && proc.getUiPage() <= 15
+                    && proc.getUiLane() >= 0 && proc.getUiLane() < kNumLanes,
+                   juce::String ("editor settings that read \"") + value + "\" are not taken over (zoom " + juce::String (zoom) + ", page "
+                    + juce::String (proc.getUiPage()) + ", lane " + juce::String (proc.getUiLane()) + ")");
+            check (opensAndPaints (proc), juce::String ("... and the interface opens and paints"));
+        }
+    }
+
+    // ------------------------------------------------------------------ sessions made to do damage
+    const juce::String leak ("TEXT-FROM-ANOTHER-FILE");
+    const auto elementsNested = [] (int depth)
+    {
+        std::string s;
+        for (int i = 0; i < depth; ++i) s += "<a>";
+        for (int i = 0; i < depth; ++i) s += "</a>";
+        return s;
+    };
+    const auto manyPoints = [] (int count)
+    {
+        std::string s = "<MOTION><LANE lane=\"3\">";
+        for (int i = 0; i < count; ++i) s += "<PT x=\"0." + std::to_string (i % 1000) + "\" y=\"0." + std::to_string ((i * 7) % 1000) + "\" c=\"0\"/>";
+        return s + "</LANE></MOTION>";
+    };
+    const auto withCurves = [] (std::string text, const std::string& motion)
+    {
+        const auto from = text.find ("<MOTION"), to = text.find ("</MOTION>");
+        if (from != std::string::npos && to != std::string::npos)
+            text.replace (from, to + 9 - from, motion);
+        return text;
+    };
+    const std::string laughs = "<?xml version=\"1.0\"?><!DOCTYPE x [<!ENTITY a \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\">"
+                               "<!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\"><!ENTITY c \"&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;\">"
+                               "<!ENTITY d \"&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;\"><!ENTITY e \"&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;\">"
+                               "<!ENTITY f \"&e;&e;&e;&e;&e;&e;&e;&e;&e;&e;\"><!ENTITY g \"&f;&f;&f;&f;&f;&f;&f;&f;&f;&f;\">"
+                               "<!ENTITY h \"&g;&g;&g;&g;&g;&g;&g;&g;&g;&g;\"><!ENTITY i \"&h;&h;&h;&h;&h;&h;&h;&h;&h;&h;\">]>";
+
+    {
+        const auto closing = sessionText.rfind ("</");
+        check (closing != std::string::npos, "test set-up: the session text ends in a closing tag");
+        const auto inject = [&] (const std::string& piece) { auto t = sessionText; t.insert (closing, piece); return t; };
+
+        const auto withName = [&] (const std::string& name)
+        {
+            auto t = sessionText;
+            const auto root = t.find ("<DLAY");
+            t.insert (root + 5, " presetName=\"" + name + "\"");
+            return t;
+        };
+
+        struct Case { const char* what; std::string text; };
+        const std::vector<Case> cases {
+            { "100,000 elements inside each other",        inject (elementsNested (100000)) },
+            { "300 elements inside each other",            inject (elementsNested (300)) },
+            { "a curve of 300,000 points",                 withCurves (sessionText, manyPoints (300000)) },
+            { "a curve of 9,000 points",                   withCurves (sessionText, manyPoints (9000)) },
+            { "a second set of curves, 9,000 points",      inject (manyPoints (9000)) },
+            { "text that multiplies itself (entities)",    laughs + inject ("<n v=\"&i;\"/>") },
+            { "8 million characters of something else",    inject ("<n v=\"" + std::string ((size_t) 8000000, 'x') + "\"/>") },
+            { "300,000 characters of something else",      inject ("<n v=\"" + std::string ((size_t) 300000, 'x') + "\"/><o>" + std::string ((size_t) 100000, 'y') + "</o>") },
+            { "a preset name of 300,000 characters",       withName (std::string ((size_t) 300000, 'N')) },
+            { "2,000 settings it does not know",           [&] { auto t = sessionText; std::string extra;
+                                                                 for (int i = 0; i < 2000; ++i) extra += " x" + std::to_string (i) + "=\"" + std::string (200, 'z') + "\"";
+                                                                 t.insert (t.find ("<DLAY") + 5, extra); return t; }() },
+            { "every parameter 300 times",                 [&] { auto t = sessionText; const auto from = t.find ("<PARAM"); const auto to = t.rfind ("<MOTION");
+                                                                 const auto params = t.substr (from, to - from); std::string many;
+                                                                 for (int i = 0; i < 300 && many.size() + t.size() < 450000; ++i) many += params;
+                                                                 t.insert (from, many); return t; }() },
+        };
+
+        for (const auto& c : cases)
+        {
+            const auto data = asSession (c.text, (int) c.text.size());
+            const double start = now();
+            proc.setStateInformation (data.getData(), (int) data.getSize());
+            const auto problem = healthy (proc);
+            juce::MemoryBlock saved;
+            proc.getStateInformation (saved);
+            const double ms = now() - start;
+
+            size_t mostPoints = 0;
+            for (int l = 0; l < kNumLanes; ++l)
+                mostPoints = std::max (mostPoints, proc.curves->getPoints (l).size());
+
+            std::printf ("  session with %-42s %7.0f ms, saved again as %d kB\n", c.what, ms, (int) (saved.getSize() / 1024));
+            check (problem.isEmpty(), juce::String ("a session with ") + c.what + " leaves the plug-in working (" + problem + ")");
+            check (ms < 1500.0, juce::String ("a session with ") + c.what + " does not stall the host (" + juce::String (ms, 0) + " ms)");
+            check (saved.getSize() < 64 * 1024, juce::String ("a session with ") + c.what + " is not carried into the next save ("
+                                                 + juce::String ((int) (saved.getSize() / 1024)) + " kB)");
+            check (mostPoints <= (size_t) MotionCurves::kMaxPoints && proc.presets->getCurrentName().length() <= 80,
+                   juce::String ("... and no curve or name is longer than the plug-in makes them (") + juce::String ((int) mostPoints) + " points, "
+                    + juce::String (proc.presets->getCurrentName().length()) + " characters)");
+        }
+
+        // a long curve that is accepted keeps its shape: thinned out, not cut off
+        {
+            std::string lane = "<MOTION><LANE lane=\"2\">";
+            for (int i = 0; i <= 4000; ++i)
+                lane += "<PT x=\"" + std::to_string ((double) i / 4000.0) + "\" y=\"" + std::to_string (0.5 + 0.4 * std::sin (6.2831853 * (double) i / 4000.0)) + "\" c=\"0\"/>";
+            lane += "</LANE></MOTION>";
+
+            const auto text = withCurves (sessionText, lane);
+            check (text != sessionText, "test set-up: the session text holds the curves");
+
+            const auto data = asSession (text, (int) text.size());
+            proc.setStateInformation (data.getData(), (int) data.getSize());
+
+            const auto points = proc.curves->getPoints (2);
+            double worst = 0.0;
+            for (int i = 0; i <= 200; ++i)
+            {
+                const float x = (float) i / 200.0f;
+                worst = std::max (worst, std::abs ((double) MotionCurves::evaluate (points, x) - (0.5 + 0.4 * std::sin (6.2831853 * (double) x))));
+            }
+
+            check ((int) points.size() == MotionCurves::kMaxPoints && points.front().x == 0.0f && points.back().x == 1.0f && worst < 0.005,
+                   "a curve of 4,001 points is thinned to " + juce::String (MotionCurves::kMaxPoints) + " and keeps its shape (off by "
+                    + juce::String (worst, 5) + " at most, " + juce::String ((int) points.size()) + " points)");
+        }
+    }
+
+    // ------------------------------------------------------------------ preset files
+    const auto presetDir = proc.presets->getUserPresetDirectory();
+    const auto workDir   = presetDir.getChildFile ("__dlay_selftest__");
+    workDir.deleteRecursively();
+    check (workDir.createDirectory().wasOk(), "test set-up: a folder for the damaged presets");
+
+    std::string presetText;
+    {
+        proc.presets->loadInit();
+        proc.curves->setPoints ((int) Lane::pan, { { 0.0f, 0.1f, 0.2f }, { 0.5f, 0.9f, -0.2f }, { 1.0f, 0.4f, 0.0f } });
+        check (proc.presets->saveUserPreset ("__dlay_selftest_seed__", "User", "the preset the damaged ones are made from").wasOk(), "test set-up: a preset to damage");
+
+        for (const auto& e : proc.presets->getEntries())
+            if (e.name == "__dlay_selftest_seed__")
+            {
+                presetText = e.file.loadFileAsString().toStdString();
+                e.file.deleteFile();
+            }
+    }
+
+    check (presetText.size() > 1000, "test set-up: the preset file was read back (" + juce::String ((int) presetText.size()) + " characters)");
+
+    const auto loadEveryPresetIn = [&] (const juce::String& marker, juce::String& firstProblem)
+    {
+        proc.presets->rescan();
+        int loaded = 0;
+
+        for (int i = proc.presets->getNumFactoryPresets(); i < (int) proc.presets->getEntries().size(); ++i)
+        {
+            const auto entry = proc.presets->getEntries()[(size_t) i];
+            if (! entry.file.isAChildOf (workDir))
+                continue;                                   // somebody's own presets: not ours to load
+
+            if ((entry.name + entry.category + entry.description).contains (leak) && firstProblem.isEmpty())
+                firstProblem = marker + ": text of another file shows up in " + entry.file.getFileName();
+
+            proc.presets->load (i);
+            ++loaded;
+
+            const auto problem = healthy (proc);
+            if (problem.isNotEmpty() && firstProblem.isEmpty())
+                firstProblem = marker + " " + entry.file.getFileName() + ": " + problem;
+
+            if ((proc.presets->getCurrentName() + proc.presets->getCurrentCategory()).contains (leak) && firstProblem.isEmpty())
+                firstProblem = marker + ": text of another file shows up in the loaded preset";
+        }
+
+        return loaded;
+    };
+
+    {
+        juce::String firstProblem;
+        int listed = 0;
+        const int batch = 40;
+        const double start = now();
+
+        for (int done = 0; done < rounds && firstProblem.isEmpty(); done += batch)
+        {
+            for (int i = 0; i < batch; ++i)
+            {
+                const auto text = mutate (presetText);
+                workDir.getChildFile ("damaged " + juce::String (i) + PresetManager::fileExtension).replaceWithData (text.data(), text.size());
+            }
+
+            listed += loadEveryPresetIn ("batch " + juce::String (done / batch), firstProblem);
+        }
+
+        std::printf ("  %d damaged preset files in %.1f s; %d of them were listed and loaded\n", rounds, (now() - start) / 1000.0, listed);
+        check (firstProblem.isEmpty(), "after every damaged preset file all values are usable numbers and audio comes out (" + firstProblem + ")");
+        check (listed > rounds / 20, "test set-up: a fair share of the damaged presets is still listed (" + juce::String (listed) + ")");
+
+        for (int i = 0; i < batch; ++i)
+            workDir.getChildFile ("damaged " + juce::String (i) + PresetManager::fileExtension).deleteFile();
+    }
+
+    // ------------------------------------------------------------------ preset files made to do damage
+    {
+        // a second file next to the preset, which the preset asks the reader to pull in
+        const auto other = workDir.getChildFile ("other.dtd");
+        other.replaceWithText ("<!ENTITY leak \"" + leak + "\">");
+
+        const auto root = presetText.find ("<DLAYPRESET");
+        check (root != std::string::npos, "test set-up: the preset text has the expected root element");
+        const auto body = presetText.substr (root == std::string::npos ? 0 : root);
+        const auto closing = body.rfind ("</");
+        const auto inject = [&] (const std::string& piece) { auto t = body; t.insert (closing, piece); return t; };
+        const auto named = [&] (const std::string& name)
+        {
+            auto t = body;
+            const auto at = t.find ("name=\"");
+            const auto end = t.find ('"', at + 6);
+            t.replace (at + 6, end - at - 6, name);
+            return t;
+        };
+
+        struct Case { const char* what; std::string text; };
+        const std::vector<Case> cases {
+            { "a pointer to another file (relative)",      "<?xml version=\"1.0\"?><!DOCTYPE DLAYPRESET SYSTEM \"other.dtd\">" + named ("&leak;") },
+            { "a pointer to another file (full path)",     "<?xml version=\"1.0\"?><!DOCTYPE DLAYPRESET SYSTEM \"" + other.getFullPathName().toStdString() + "\">" + named ("&leak;") },
+            { "a pointer to another file (in the header)", "<?xml version=\"1.0\"?><!DOCTYPE DLAYPRESET [<!ENTITY % ext SYSTEM \"other.dtd\"> %ext;]>" + named ("&leak;") },
+            { "an entity that names another file",         "<?xml version=\"1.0\"?><!DOCTYPE DLAYPRESET [<!ENTITY leak SYSTEM \"other.dtd\">]>" + named ("&leak;") },
+            { "100,000 elements inside each other",        inject (elementsNested (100000)) },
+            { "300 elements inside each other",            inject (elementsNested (300)) },
+            { "a curve of 300,000 points",                 withCurves (body, manyPoints (300000)) },
+            { "a curve of 9,000 points",                   withCurves (body, manyPoints (9000)) },
+            { "text that multiplies itself (entities)",    laughs + named ("&i;") },
+            { "a name of 8 million characters",            named (std::string ((size_t) 8000000, 'x')) },
+            { "a name of 300,000 characters",              named (std::string ((size_t) 300000, 'x')) },
+            { "a name made of line breaks and tabs",       named ("&#10;&#13;&#9;Evil&#10;&#10;Name&#9;") },
+            { "values that are not numbers",               [&] { auto t = body;
+                                                                 for (size_t at = t.find (" v=\""); at != std::string::npos; at = t.find (" v=\"", at + 1))
+                                                                 { const auto end = t.find ('"', at + 4); t.replace (at + 4, end - at - 4, "nan"); }
+                                                                 return t; }() },
+            { "9,000 values for parameters it has not",    [&] { std::string extra; for (int i = 0; i < 9000; ++i) extra += "<P id=\"nope" + std::to_string (i) + "\" v=\"1\"/>";
+                                                                 return inject (extra); }() },
+        };
+
+        for (const auto& c : cases)
+        {
+            const auto file = workDir.getChildFile (juce::String ("hostile") + PresetManager::fileExtension);
+            file.replaceWithData (c.text.data(), c.text.size());
+
+            juce::String problem;
+            const double start = now();
+            loadEveryPresetIn (c.what, problem);
+
+            // ... and through the IMPORT button, from a folder outside the library
+            const auto outside = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("__dlay_selftest_import__");
+            outside.createDirectory();
+            const auto source = outside.getChildFile (juce::String ("__dlay_selftest_imported__") + PresetManager::fileExtension);
+            source.replaceWithData (c.text.data(), c.text.size());
+            other.copyFileTo (outside.getChildFile ("other.dtd"));
+            const bool imported = proc.presets->importPresetFile (source).wasOk();
+
+            for (const auto& e : proc.presets->getEntries())
+                if (! e.isFactory && (e.name + e.category + e.description).contains (leak) && problem.isEmpty())
+                    problem = "text of another file shows up after an import";
+
+            if (problem.isEmpty())
+                problem = healthy (proc);
+
+            juce::MemoryBlock saved;
+            proc.getStateInformation (saved);
+            const double ms = now() - start;
+
+            // what an import leaves in the library is small, and is DLAY's own writing
+            const auto kept = presetDir.getChildFile (juce::String ("__dlay_selftest_imported__") + PresetManager::fileExtension);
+            const auto keptText = kept.loadFileAsString();
+            size_t longest = 0, mostPoints = 0;
+
+            for (const auto& e : proc.presets->getEntries())
+                if (! e.isFactory && (e.file.isAChildOf (workDir) || e.file == kept))
+                    longest = std::max ({ longest, (size_t) e.name.length(), (size_t) e.category.length(), (size_t) e.description.length() / 8 });
+
+            for (int l = 0; l < kNumLanes; ++l)
+                mostPoints = std::max (mostPoints, proc.curves->getPoints (l).size());
+
+            std::printf ("  preset with %-43s %7.0f ms, %s, session then %d kB\n", c.what, ms, imported ? "imported" : "refused  ", (int) (saved.getSize() / 1024));
+            check (problem.isEmpty(), juce::String ("a preset file with ") + c.what + " does no harm (" + problem + ")");
+            check (ms < 1500.0, juce::String ("a preset file with ") + c.what + " does not stall the host (" + juce::String (ms, 0) + " ms)");
+            check (saved.getSize() < 64 * 1024, juce::String ("a preset file with ") + c.what + " does not swell the session ("
+                                                 + juce::String ((int) (saved.getSize() / 1024)) + " kB)");
+            check (longest <= 80 && mostPoints <= (size_t) MotionCurves::kMaxPoints,
+                   juce::String ("... and no name or curve is longer than the plug-in makes them (") + juce::String ((int) longest) + " characters, "
+                    + juce::String ((int) mostPoints) + " points)");
+            check (! imported || (kept.getSize() < 64 * 1024 && ! keptText.containsIgnoreCase ("DOCTYPE") && ! keptText.contains ("ENTITY")
+                                   && ! keptText.contains ("nope") && ! keptText.containsIgnoreCase ("\"nan\"")),
+                   juce::String ("... and an import stores DLAY's own writing of it, not the file as it came (") + juce::String ((int) (kept.getSize() / 1024)) + " kB)");
+
+            file.deleteFile();
+            outside.deleteRecursively();
+            presetDir.getChildFile (juce::String ("__dlay_selftest_imported__") + PresetManager::fileExtension).deleteFile();
+        }
+    }
+
+    workDir.deleteRecursively();
+    proc.presets->rescan();
+
+    bool clean = true;
+    for (const auto& e : proc.presets->getEntries())
+        clean = clean && ! e.name.startsWith ("__dlay_selftest");
+    check (clean && ! workDir.exists(), "the test leaves nothing behind in the preset folder");
+}
+
+// ============================================================================
 void runPerformance()
 {
     section ("CPU cost per algorithm (48 kHz, 512-sample blocks, 2x oversampling)");
@@ -2093,6 +2655,15 @@ int main (int argc, char** argv)
         return failures();
     }
 
+    if (args.contains ("--foreign"))
+    {
+        // only the damaged-data test, with as many rounds as asked for (for a sanitizer build)
+        const int i = args.indexOf ("--foreign");
+        testForeignData (juce::jmax (1, i + 1 < args.size() ? args[i + 1].getIntValue() : 400));
+        std::printf ("\n%d checks, %d failures\n", checks(), failures());
+        return failures() == 0 ? 0 : 1;
+    }
+
     std::printf ("DLAY %s test runner\n", DLAY_VERSION_STRING);
 
     // --quick skips the long renders (useful in Debug builds, where the point is the assertions)
@@ -2119,6 +2690,7 @@ int main (int argc, char** argv)
     testProcessor();
     testOutputStageGlides();
     testPresets (args.contains ("--verbose"), quick);
+    testForeignData (quick ? 80 : 400);
 
     if (! quick)
         runPerformance();
